@@ -1,6 +1,6 @@
 ---
 description: Query and write to the claude-lore knowledge graph. Use for /lore questions about decisions, risks, deferred work, session history, and cross-repo dependencies.
-argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol>
+argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol> | review-map | review-diff [--base <ref>] | review-propagation <file>
 allowed-tools: [Read, Glob, Grep]
 ---
 
@@ -247,6 +247,49 @@ Calls `provenance_trace(symbol, repo)` via MCP.
 ```
 /lore provenance resolveIdentity
 /lore provenance buildContextString
+```
+
+---
+
+### /lore review-map
+
+Open a visual codebase map showing all files and import edges, coloured by reasoning coverage.
+
+Calls `review_map(repo, cwd)` via MCP. Node colours: red=risk, blue=decision, amber=deferred, grey=none.
+
+Click any node to open the detail panel with three tabs:
+- **Annotations** — full content of every decision, risk, and deferred record linked to this file
+- **Code** — first 100 lines of source; lines matching a record symbol are highlighted in green
+- **Deps** — imports and imported-by lists
+
+```
+/lore review-map
+/lore review-map --layout radial
+```
+
+---
+
+### /lore review-diff
+
+Show the current git diff overlaid with reasoning records for each changed file.
+
+Calls `review_diff(repo, cwd)` via MCP. Files with risks or large changes to decision-heavy code are flagged.
+
+```
+/lore review-diff
+/lore review-diff --base main
+```
+
+---
+
+### /lore review-propagation \<file\>
+
+Show which files are transitively affected by changing a given file.
+
+Calls `review_propagation(repo, cwd, file)` via MCP.
+
+```
+/lore review-propagation src/services/auth.ts
 ```
 
 ---

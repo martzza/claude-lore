@@ -451,6 +451,83 @@ export const CLI_COMMANDS: CommandHelp[] = [
   },
 
   {
+    name: "review-map",
+    group: "visualising",
+    summary: "Codebase map coloured by reasoning coverage.",
+    description:
+      "Generates an interactive D3 force graph showing every source file and its import edges. Nodes are colour-coded: red=has risks, blue=has decisions, amber=has deferred work, grey=no reasoning. Entry-point files have a yellow border. Click any node to see its reasoning records and dependency list.",
+    usage: [
+      "claude-lore review-map",
+      "claude-lore review-map --layout radial",
+      "claude-lore review-map --format mermaid",
+      "claude-lore review-map --no-open --format html > /tmp/map.html",
+    ],
+    flags: [
+      { flag: "--format <fmt>",  desc: "Output format: html (default)|mermaid" },
+      { flag: "--layout <l>",    desc: "Graph layout: force (default)|radial" },
+      { flag: "--open",          desc: "Open in browser (default: on)" },
+      { flag: "--no-open",       desc: "Write to /tmp but do not open" },
+      { flag: "--repo <path>",   desc: "Repo path (defaults to cwd)" },
+      { flag: "--cwd <dir>",     desc: "Directory to scan (defaults to repo)" },
+    ],
+    examples: [
+      { command: "claude-lore review-map", desc: "Open force graph of current repo" },
+      { command: "claude-lore review-map --layout radial", desc: "Radial layout" },
+    ],
+    seeAlso: ["review-diff", "review-propagation", "annotate", "coverage"],
+  },
+
+  {
+    name: "review-diff",
+    group: "visualising",
+    summary: "Pre-commit review with reasoning overlay.",
+    description:
+      "Generates an HTML report showing the current git diff side-by-side with any reasoning records (decisions, risks, deferred items) associated with each changed file. Files with warnings (e.g. risks attached, large changes to decision-heavy files) are automatically expanded. Safe to run multiple times — read-only.",
+    usage: [
+      "claude-lore review-diff",
+      "claude-lore review-diff --base main",
+      "claude-lore review-diff --format json",
+    ],
+    flags: [
+      { flag: "--format <fmt>", desc: "Output format: html (default)|json" },
+      { flag: "--base <ref>",   desc: "Git base ref (default: HEAD)" },
+      { flag: "--open",         desc: "Open in browser (default: on)" },
+      { flag: "--no-open",      desc: "Write to /tmp but do not open" },
+      { flag: "--repo <path>",  desc: "Repo path (defaults to cwd)" },
+      { flag: "--cwd <dir>",    desc: "Working directory (defaults to repo)" },
+    ],
+    examples: [
+      { command: "claude-lore review-diff", desc: "Review uncommitted changes vs HEAD" },
+      { command: "claude-lore review-diff --base main", desc: "Review everything not yet on main" },
+    ],
+    seeAlso: ["review-map", "review-propagation", "adr list"],
+  },
+
+  {
+    name: "review-propagation",
+    group: "visualising",
+    summary: "Files transitively affected by changing a given file.",
+    description:
+      "Shows the full propagation blast-radius of a single file change. Starting from the focus file, walks outward through all files that import it (directly or transitively) and renders a D3 graph with reasoning overlay. Useful before refactoring a shared module.",
+    usage: [
+      "claude-lore review-propagation <file>",
+      "claude-lore review-propagation src/services/auth.ts",
+    ],
+    flags: [
+      { flag: "--format <fmt>", desc: "Output format: html (default)|json" },
+      { flag: "--open",         desc: "Open in browser (default: on)" },
+      { flag: "--no-open",      desc: "Write to /tmp but do not open" },
+      { flag: "--repo <path>",  desc: "Repo path (defaults to cwd)" },
+      { flag: "--cwd <dir>",    desc: "Working directory (defaults to repo)" },
+    ],
+    examples: [
+      { command: "claude-lore review-propagation src/utils/db.ts",
+        desc: "All files affected by changing db.ts" },
+    ],
+    seeAlso: ["review-map", "review-diff", "graph symbol"],
+  },
+
+  {
     name: "portfolio create",
     group: "portfolio",
     summary: "Create a named group of related repos.",

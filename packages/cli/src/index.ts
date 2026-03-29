@@ -412,6 +412,50 @@ program
     await runUpdate();
   });
 
+// claude-lore review-map
+program
+  .command("review-map")
+  .description("Open visual codebase map coloured by reasoning coverage")
+  .option("--format <fmt>", "Output format: html (default)|mermaid", "html")
+  .option("--layout <l>", "Graph layout: force|radial", "force")
+  .option("--open", "Open in browser (default: true)", true)
+  .option("--no-open", "Do not open in browser")
+  .option("--repo <path>", "Repo path (defaults to cwd)")
+  .option("--cwd <dir>", "Directory to scan (defaults to repo)")
+  .action(async (opts: { format?: string; layout?: string; open?: boolean; repo?: string; cwd?: string }) => {
+    const { runReviewMap } = await import("./commands/review-visual.js");
+    await runReviewMap(opts);
+  });
+
+// claude-lore review-diff
+program
+  .command("review-diff")
+  .description("Pre-commit review with reasoning overlay on git diff")
+  .option("--format <fmt>", "Output format: html (default)|json", "html")
+  .option("--base <ref>", "Git base ref (default: HEAD)", "HEAD")
+  .option("--open", "Open in browser (default: true)", true)
+  .option("--no-open", "Do not open in browser")
+  .option("--repo <path>", "Repo path (defaults to cwd)")
+  .option("--cwd <dir>", "Working directory (defaults to repo)")
+  .action(async (opts: { format?: string; base?: string; open?: boolean; repo?: string; cwd?: string }) => {
+    const { runReviewDiff } = await import("./commands/review-visual.js");
+    await runReviewDiff(opts);
+  });
+
+// claude-lore review-propagation <file>
+program
+  .command("review-propagation <file>")
+  .description("Show which files are transitively affected by changing a file")
+  .option("--format <fmt>", "Output format: html (default)|json", "html")
+  .option("--open", "Open in browser (default: true)", true)
+  .option("--no-open", "Do not open in browser")
+  .option("--repo <path>", "Repo path (defaults to cwd)")
+  .option("--cwd <dir>", "Working directory (defaults to repo)")
+  .action(async (file: string, opts: { format?: string; open?: boolean; repo?: string; cwd?: string }) => {
+    const { runReviewPropagation } = await import("./commands/review-visual.js");
+    await runReviewPropagation(file, opts);
+  });
+
 program.parseAsync(process.argv).catch((err) => {
   console.error(err);
   process.exit(1);

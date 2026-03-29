@@ -70,6 +70,9 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "annotate this file / show me the reasoning for this code" | `annotate_file(file_path, repo)` |
 | "what's the reasoning coverage for this repo" | `annotation_coverage(repo, cwd)` |
 | "show me the history of X / decision history of X" | `provenance_trace(symbol=X, repo, format="mermaid")` |
+| "/lore review-map" or "show me the codebase map" | `review_map(repo, cwd)` — opens visual file dependency map |
+| "/lore review-diff" or "review my changes / pre-commit review" | `review_diff(repo, cwd)` — shows git diff with reasoning overlay |
+| "/lore review-propagation <file>" or "what breaks if I change X file" | `review_propagation(repo, cwd, file=X)` — blast radius for a file change |
 
 When in doubt, start with `reasoning_get` + `session_load` and extend based on what gaps
 appear in the initial results. For broad health or completeness questions, prefer

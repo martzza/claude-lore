@@ -53,6 +53,9 @@ Agents query the graph via MCP — available to both Claude Code and Cursor:
 - `session_load` / `session_search` — session history and current state
 - `personal_log` / `personal_get` — developer-only notes, never synced
 - `portfolio_deps` / `portfolio_impact` / `portfolio_context` — cross-repo awareness
+- `review_map` — visual codebase map (HTML), nodes coloured by reasoning coverage
+- `review_diff` — pre-commit review with reasoning overlay on current git diff
+- `review_propagation` — transitive impact view for a given file
 
 ---
 
@@ -122,6 +125,37 @@ claude-lore bootstrap --dry-run
 # See all available templates
 claude-lore bootstrap --list
 ```
+
+---
+
+## Visual review tools
+
+Three CLI commands open interactive HTML views in your browser. Each node in the map
+is coloured by reasoning coverage — red for risks, blue for decisions, amber for
+deferred work, grey for no reasoning. Clicking a node opens a side panel with three
+tabs: **Annotations** (full records), **Code** (source with lines highlighted by record
+type — red for risks, blue for decisions, amber for deferred), and **Deps** (imports
+and dependents).
+
+```bash
+# Full codebase map — force or radial layout
+claude-lore review-map
+claude-lore review-map --layout radial
+
+# Pre-commit review: reasoning overlay on your current git diff
+claude-lore review-diff
+claude-lore review-diff --base main
+
+# Transitive impact view: which files break if this one changes?
+claude-lore review-propagation src/auth/middleware.ts
+
+# Output JSON instead of opening a browser
+claude-lore review-map --format mermaid
+claude-lore review-diff --format json
+```
+
+These are also available as MCP tools (`review_map`, `review_diff`,
+`review_propagation`) so agents can generate and inspect them directly.
 
 ---
 

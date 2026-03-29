@@ -10,11 +10,15 @@ respects the established decisions and constraints for the affected symbols.
 
 ## What you do
 
-1. Get changed files:
+1. Get the pre-commit review with reasoning overlay:
+   Call review_diff(repo, cwd, format="json") to get all changed files and their
+   associated reasoning records in a single structured call.
+
+   If the JSON output shows no changed files, fall back to:
    Run: git diff --name-only HEAD
 
-2. For each changed file, get annotations:
-   Call annotate_file(file_path, repo) for each changed file.
+2. For each changed file that has associated reasoning records:
+   Optionally call annotate_file(file_path, repo) for deeper per-symbol annotation.
    Focus on symbols that have confirmed decisions or high/critical risks.
 
 3. For each annotated symbol in the diff, check:
@@ -22,6 +26,7 @@ respects the established decisions and constraints for the affected symbols.
    - Does the change introduce a pattern that contradicts any decision?
    - Does the change affect a symbol with a high/critical risk?
    - Does the change affect a cross-repo exported symbol?
+   - Does review_diff report any warnings (risk records, large changes)?
 
 4. Produce review:
 

@@ -6,6 +6,7 @@ import { registerPortfolioTools } from "./tools/portfolio.js";
 import { registerAdvisorTools } from "./tools/advisor.js";
 import { registerGraphTools } from "./tools/graph.js";
 import { registerAnnotationTools } from "./tools/annotation.js";
+import { registerReviewTools } from "./tools/review.js";
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -20,6 +21,7 @@ export function createMcpServer(): McpServer {
   registerAdvisorTools(server);
   registerGraphTools(server);
   registerAnnotationTools(server);
+  registerReviewTools(server);
 
   return server;
 }
