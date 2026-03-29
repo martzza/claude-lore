@@ -73,6 +73,7 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "/lore review-map" or "show me the codebase map" | `review_map(repo, cwd)` — opens visual file dependency map |
 | "/lore review-diff" or "review my changes / pre-commit review" | `review_diff(repo, cwd)` — shows git diff with reasoning overlay |
 | "/lore review-propagation <file>" or "what breaks if I change X file" | `review_propagation(repo, cwd, file=X)` — blast radius for a file change |
+| "/lore review" or "review pending records" | `reasoning_pending(repo)` — interactive confirm/discard loop (see Review flow section) |
 
 When in doubt, start with `reasoning_get` + `session_load` and extend based on what gaps
 appear in the initial results. For broad health or completeness questions, prefer
@@ -131,6 +132,48 @@ These are safe to tackle simultaneously with subagents.
 
 Highest priority: run `claude-lore advisor claudemd --apply` to trim the CLAUDE.md bloat.
 ```
+
+## Review flow — `/lore review`
+
+`/lore review` is the one exception to the read-only rule. It runs an interactive
+confirm/discard loop entirely inside the Claude Code session.
+
+### How to handle `/lore review`
+
+1. Call `reasoning_pending(repo)` to fetch all unconfirmed records.
+2. If the list is empty, say so and stop.
+3. If there are records, present the first batch (up to 10) as a numbered list:
+
+```
+12 records pending review.
+
+[1] decision  (extracted)  — session records suggest: switched to tRPC for end-to-end type safety
+[2] risk      (inferred)   — A03 Injection: SQL queries in src/db/queries.ts are not parameterised  [db]
+[3] deferred  (extracted)  — Add rate limiting to all public endpoints
+...
+
+For each: reply with the numbers to confirm (e.g. "c 1 3 5"), discard (e.g. "d 2"), or skip ("s").
+Type "c all" to confirm all, "d all" to discard all, or "done" to finish.
+```
+
+4. Parse the user's reply:
+   - `c <numbers>` or `c all` → call `reasoning_confirm(id, table)` for each
+   - `d <numbers>` or `d all` → call `reasoning_discard(id, table)` for each
+   - `s` or no input → skip, move to next batch
+   - `done` or `q` → stop
+5. After each batch, show counts (`X confirmed, Y discarded`) and offer the next batch.
+6. When all records are processed, print a final summary.
+
+### Rules for the review flow
+
+- Present records grouped by type: risks first (highest stakes), then decisions, then deferred.
+- Show the full content for each record, not truncated.
+- If a record's symbol is set, show it in brackets: `[authMiddleware]`.
+- `reasoning_confirm` and `reasoning_discard` are the **only** write tools permitted during `/lore review`.
+- Never call `reasoning_log` during review — this loop is for reviewing existing records, not creating new ones.
+- After confirming a record, do not re-display it as pending.
+
+---
 
 ## Strict read-only rule
 

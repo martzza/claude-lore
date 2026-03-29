@@ -1,6 +1,12 @@
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getReasoningData, logReasoning } from "../../services/reasoning/service.js";
+import {
+  getReasoningData,
+  logReasoning,
+  getPendingRecords,
+  confirmRecord,
+  discardRecord,
+} from "../../services/reasoning/service.js";
 
 export function registerReasoningTools(server: McpServer): void {
   server.tool(
@@ -39,6 +45,57 @@ export function registerReasoningTools(server: McpServer): void {
             text: JSON.stringify({ id, type, confidence: "extracted" }),
           },
         ],
+      };
+    },
+  );
+
+  // ── reasoning_pending ──────────────────────────────────────────────────────
+  server.tool(
+    "reasoning_pending",
+    "List all unconfirmed (extracted or inferred) records for a repo. Returns decisions, risks, and deferred items that a human has not yet reviewed. Use this to drive the /lore review flow.",
+    {
+      repo: z.string().optional().describe("Repo path to filter by (defaults to all)"),
+    },
+    async ({ repo }) => {
+      const records = await getPendingRecords(repo);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(records, null, 2) }],
+      };
+    },
+  );
+
+  // ── reasoning_confirm ──────────────────────────────────────────────────────
+  server.tool(
+    "reasoning_confirm",
+    "Mark a pending record as confirmed. Only humans should call this — it sets confidence to 'confirmed' and records the reviewer's git email. Provide the record id and its table (decisions | deferred_work | risks).",
+    {
+      id: z.string().describe("Record ID to confirm"),
+      table: z
+        .enum(["decisions", "deferred_work", "risks"])
+        .describe("Table the record belongs to"),
+    },
+    async ({ id, table }) => {
+      await confirmRecord(id, table);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ ok: true, id, table, confidence: "confirmed" }) }],
+      };
+    },
+  );
+
+  // ── reasoning_discard ──────────────────────────────────────────────────────
+  server.tool(
+    "reasoning_discard",
+    "Permanently delete a pending record. Use when a record is incorrect, irrelevant, or a duplicate. Provide the record id and its table.",
+    {
+      id: z.string().describe("Record ID to discard"),
+      table: z
+        .enum(["decisions", "deferred_work", "risks"])
+        .describe("Table the record belongs to"),
+    },
+    async ({ id, table }) => {
+      await discardRecord(id, table);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ ok: true, id, table, discarded: true }) }],
       };
     },
   );

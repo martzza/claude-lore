@@ -66,6 +66,23 @@ router.post("/discard", async (req, res) => {
   }
 });
 
+// POST /api/records/edit — update content of a record (auto-stays at current confidence)
+router.post("/edit", async (req, res) => {
+  const parsed = RecordRefBody.extend({ content: z.string().min(1) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const { id, table, content } = parsed.data;
+  try {
+    const db = sessionsDb;
+    await db.execute({ sql: `UPDATE ${table} SET content = ? WHERE id = ?`, args: [content, id] });
+    res.json({ ok: true, id, table });
+  } catch (err) {
+    res.status(400).json({ error: String(err) });
+  }
+});
+
 // GET /api/records/pending?repo= — all extracted/inferred records awaiting review
 router.get("/pending", async (req, res) => {
   const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
