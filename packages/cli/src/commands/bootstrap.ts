@@ -1,4 +1,7 @@
 import { createInterface } from "readline";
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 
 const PORT = process.env["CLAUDE_LORE_PORT"] ?? "37778";
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -424,6 +427,25 @@ function showBootstrapSummary(
   console.log(`  Records added: ${totalWritten}`);
   if (typeSummary) console.log(`    ${typeSummary}`);
   console.log("  All confidence: inferred (not yet confirmed)\n");
+
+  // Surface team sync hint if Turso not yet configured
+  if (isFirstRun) {
+    const globalConfigPath = join(homedir(), ".codegraph", "config.json");
+    const tursoConfigured = (() => {
+      if (!existsSync(globalConfigPath)) return false;
+      try {
+        const cfg = JSON.parse(readFileSync(globalConfigPath, "utf8")) as Record<string, unknown>;
+        return typeof cfg["turso_url"] === "string" && cfg["turso_url"].length > 0;
+      } catch { return false; }
+    })();
+
+    if (!tursoConfigured) {
+      console.log("  TEAM SYNC\n");
+      console.log("  Decisions and risks are currently stored locally only.");
+      console.log("  To share them with your team, connect a free Turso database:");
+      console.log("    claude-lore team setup\n");
+    }
+  }
 
   if (isFirstRun) {
     console.log("  WHAT TO DO NOW\n");

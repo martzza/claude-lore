@@ -187,6 +187,14 @@ skillsCmd
     await runSkillsInstall(name, opts);
   });
 
+skillsCmd
+  .command("suggest")
+  .description("Show skills installed by claude-lore and suggest well-paired Claude Code skills")
+  .action(async () => {
+    const { runSkillsSuggest } = await import("./commands/skills.js");
+    runSkillsSuggest();
+  });
+
 // claude-lore review
 program
   .command("review")

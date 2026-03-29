@@ -1,10 +1,19 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
+import { homedir } from "os";
+import { createInterface } from "readline";
 import { findProjectRoot, ensureWorkerRunning } from "../worker-utils.js";
+
+async function prompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => { rl.close(); resolve(answer.trim()); });
+  });
+}
 
 const CODEGRAPH_CONFIG_TEMPLATE = {
   visibility_default: "private",
-  canonical_skills: ["kg-query", "kg-doc"],
+  canonical_skills: ["kg-query", "kg-doc", "review"],
 };
 
 function buildClaudeHooks(loreRoot: string): Record<string, unknown> {
@@ -136,7 +145,60 @@ export async function runInit(repoPath: string): Promise<void> {
     writeFileSync(mcpPath, JSON.stringify(mergedMcp, null, 2));
   }
 
-  // ── Step 4: Next steps ───────────────────────────────────────────────────
+  // ── Step 4: Team sync (Turso) — optional ────────────────────────────────
+  const globalConfigPath = join(homedir(), ".codegraph", "config.json");
+  const tursoAlreadyConfigured = (() => {
+    if (!existsSync(globalConfigPath)) return false;
+    try {
+      const cfg = JSON.parse(readFileSync(globalConfigPath, "utf8")) as Record<string, unknown>;
+      return typeof cfg["turso_url"] === "string" && cfg["turso_url"].length > 0;
+    } catch { return false; }
+  })();
+
+  if (!tursoAlreadyConfigured) {
+    console.log();
+    console.log("─────────────────────────────────────────────────────────");
+    console.log("  Team sync (optional)");
+    console.log("─────────────────────────────────────────────────────────");
+    console.log("  By default, claude-lore stores everything locally.");
+    console.log("  If you're working with a team, you can sync shared");
+    console.log("  decisions and risks via a free Turso database.\n");
+    console.log("  Solo developers can skip this — set it up later with:");
+    console.log("    claude-lore team setup\n");
+
+    const teamAnswer = await prompt("  Working with a team? Set up Turso sync now? (y/N): ");
+
+    if (teamAnswer.toLowerCase() === "y" || teamAnswer.toLowerCase() === "yes") {
+      console.log();
+      console.log("  Create a free database at https://turso.tech if you don't have one yet.");
+      console.log("  Then run: turso db show <name> --url  and  turso db tokens create <name>\n");
+
+      const tursoUrl = await prompt("  Turso database URL (libsql://...): ");
+      const tursoToken = await prompt("  Auth token: ");
+
+      if (tursoUrl.startsWith("libsql://") && tursoToken.length > 0) {
+        let globalConfig: Record<string, unknown> = {};
+        if (existsSync(globalConfigPath)) {
+          try { globalConfig = JSON.parse(readFileSync(globalConfigPath, "utf8")) as Record<string, unknown>; } catch {}
+        }
+        globalConfig["turso_url"] = tursoUrl;
+        globalConfig["turso_auth_token"] = tursoToken;
+        mkdirSync(join(homedir(), ".codegraph"), { recursive: true });
+        writeFileSync(globalConfigPath, JSON.stringify(globalConfig, null, 2));
+        console.log("\n  ✓ Turso team sync configured (~/.codegraph/config.json)");
+        console.log("  Restart the worker to activate:  claude-lore worker restart");
+      } else {
+        console.log("\n  Skipped — URL must start with libsql:// and token must not be empty.");
+        console.log("  Configure later:  claude-lore team setup");
+      }
+    } else {
+      console.log("\n  Running in solo mode. Add team sync later with: claude-lore team setup");
+    }
+  } else {
+    console.log("✓ Turso team sync already configured");
+  }
+
+  // ── Step 5: Next steps ───────────────────────────────────────────────────
   console.log();
   console.log(`✓ claude-lore initialised in ${repoPath}`);
   console.log();

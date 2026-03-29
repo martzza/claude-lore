@@ -150,6 +150,83 @@ export async function runSkillsInstall(
   await installOne(skillName, repo);
 }
 
+// ---------------------------------------------------------------------------
+// skills suggest
+// ---------------------------------------------------------------------------
+
+const CLAUDE_LORE_SKILLS = [
+  { name: "kg-query",  trigger: "/lore",   desc: "Query the knowledge graph — decisions, risks, deferred, session history" },
+  { name: "kg-doc",    trigger: "/doc",    desc: "Generate runbooks, architecture docs, ADRs, and onboarding guides" },
+  { name: "review",    trigger: "/review", desc: "Visual codebase map, pre-commit diff overlay, propagation view" },
+];
+
+// Skills from the Claude Code ecosystem that pair well with claude-lore.
+// Listed in priority order — most commonly useful first.
+const PAIRED_SKILLS = [
+  {
+    category: "Git workflow",
+    skills: [
+      { name: "commit",           source: "claude-code built-in", desc: "Generate conventional commit messages from staged changes" },
+      { name: "review-pr",        source: "claude-code built-in", desc: "AI-powered pull request review with inline comments" },
+    ],
+  },
+  {
+    category: "Code quality",
+    skills: [
+      { name: "simplify",         source: "claude-code built-in", desc: "Review changed code for reuse, quality, and efficiency" },
+      { name: "claude-api",       source: "claude-code built-in", desc: "Build apps with the Claude API / Anthropic SDK" },
+    ],
+  },
+  {
+    category: "Automation",
+    skills: [
+      { name: "loop",             source: "claude-code built-in", desc: "Run a skill on a recurring interval (polling, babysitting)" },
+      { name: "schedule",         source: "claude-code built-in", desc: "Schedule agents to run on a cron expression" },
+      { name: "update-config",    source: "claude-code built-in", desc: "Configure hooks, permissions, and env vars in settings.json" },
+    ],
+  },
+  {
+    category: "Community (high-star marketplace examples)",
+    skills: [
+      { name: "test-gen",         source: "marketplace",          desc: "Generate test cases for a selected file or function" },
+      { name: "explain",          source: "marketplace",          desc: "Explain a function, module, or error in plain language" },
+      { name: "refactor",         source: "marketplace",          desc: "Guided refactoring with blast-radius awareness" },
+      { name: "changelog",        source: "marketplace",          desc: "Generate CHANGELOG entries from commit history" },
+    ],
+  },
+];
+
+export function runSkillsSuggest(): void {
+  console.log("\nSkills installed by claude-lore");
+  console.log("────────────────────────────────");
+  for (const s of CLAUDE_LORE_SKILLS) {
+    console.log(`  ${s.trigger.padEnd(10)}  ${s.name.padEnd(12)}  ${s.desc}`);
+  }
+
+  console.log("\nSkills that pair well with claude-lore");
+  console.log("───────────────────────────────────────");
+  for (const group of PAIRED_SKILLS) {
+    console.log(`\n  ${group.category}`);
+    for (const s of group.skills) {
+      const src = `[${s.source}]`;
+      console.log(`    ${s.name.padEnd(18)} ${src.padEnd(26)} ${s.desc}`);
+    }
+  }
+
+  console.log("\nHow to install");
+  console.log("───────────────");
+  console.log("  Claude Code built-ins are available automatically.");
+  console.log("  Invoke them with /commit, /review-pr, /simplify, etc.\n");
+  console.log("  To install a marketplace skill:");
+  console.log("    1. Search at https://claude.ai/code/marketplace");
+  console.log("    2. Copy the .md skill file into .claude/skills/ in your repo");
+  console.log("       (repo-scoped) or ~/.claude/skills/ (global)\n");
+  console.log("  To see team skill alignment:");
+  console.log("    claude-lore skills --onboarding\n");
+  console.log("  To install a canonical team skill:");
+  console.log("    claude-lore skills install <name>\n");
+}
+
 async function installOne(skillName: string, repo: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/skills/install`, {
     method: "POST",
