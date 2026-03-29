@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "beforeSubmitPrompt": {
+      "command": "node ${CLAUDE_LORE_PATH}/packages/hooks/cursor/context-hook.js",
+      "timeout": 5000
+    },
+    "afterFileEdit": {
+      "command": "node ${CLAUDE_LORE_PATH}/packages/hooks/cursor/observe-hook.js",
+      "timeout": 3000
+    },
+    "beforeShellExecution": {
+      "command": "node ${CLAUDE_LORE_PATH}/packages/hooks/cursor/shell-hook.js",
+      "timeout": 3000
+    },
+    "stop": {
+      "command": "node ${CLAUDE_LORE_PATH}/packages/hooks/cursor/summary-hook.js",
+      "timeout": 5000
+    }
+  }
+}

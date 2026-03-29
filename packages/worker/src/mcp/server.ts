@@ -1,0 +1,25 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerReasoningTools } from "./tools/reasoning.js";
+import { registerSessionTools } from "./tools/sessions.js";
+import { registerPersonalTools } from "./tools/personal.js";
+import { registerPortfolioTools } from "./tools/portfolio.js";
+import { registerAdvisorTools } from "./tools/advisor.js";
+import { registerGraphTools } from "./tools/graph.js";
+import { registerAnnotationTools } from "./tools/annotation.js";
+
+export function createMcpServer(): McpServer {
+  const server = new McpServer({
+    name: "claude-lore",
+    version: "0.5.0",
+  });
+
+  registerReasoningTools(server);
+  registerSessionTools(server);
+  registerPersonalTools(server);
+  registerPortfolioTools(server);
+  registerAdvisorTools(server);
+  registerGraphTools(server);
+  registerAnnotationTools(server);
+
+  return server;
+}

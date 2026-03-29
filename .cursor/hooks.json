@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "beforeSubmitPrompt": {
+      "command": "node /Users/davidcalamante/Documents/claude-lore/packages/hooks/cursor/context-hook.js",
+      "timeout": 5000
+    },
+    "afterFileEdit": {
+      "command": "node /Users/davidcalamante/Documents/claude-lore/packages/hooks/cursor/observe-hook.js",
+      "timeout": 3000
+    },
+    "beforeShellExecution": {
+      "command": "node /Users/davidcalamante/Documents/claude-lore/packages/hooks/cursor/shell-hook.js",
+      "timeout": 3000
+    },
+    "stop": {
+      "command": "node /Users/davidcalamante/Documents/claude-lore/packages/hooks/cursor/summary-hook.js",
+      "timeout": 5000
+    }
+  }
+}

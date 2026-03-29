@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "claude-lore": {
+      "command": "bun",
+      "args": [
+        "run",
+        "/Users/davidcalamante/Documents/claude-lore/packages/worker/mcp.ts"
+      ],
+      "env": {
+        "CLAUDE_LORE_PORT": "37778"
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@claude-lore/hooks-claude-code",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code lifecycle hook scripts for claude-lore",
+  "type": "module"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@claude-lore/hooks-cursor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cursor lifecycle hook scripts for claude-lore",
+  "type": "module"
+}

@@ -1,0 +1,154 @@
+---
+description: Query and write to the claude-lore knowledge graph. Use for /lore questions about decisions, risks, deferred work, session history, and cross-repo dependencies.
+argument-hint: <question> | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap
+allowed-tools: [Read, Glob, Grep]
+---
+
+# /lore — Knowledge Graph Interface
+
+Query and write to the claude-lore knowledge graph from within Claude Code.
+
+---
+
+## Command reference
+
+### /lore \<question\>
+
+Natural language graph query. Uses the `kg-query` skill.
+
+Dispatches to the appropriate MCP tools based on question type, then returns
+a structured FACTS / ANALYSIS / GAPS response.
+
+```
+/lore what did we decide about the database driver?
+/lore what breaks if I change the auth middleware?
+/lore what was in progress last session?
+/lore why does the hook script always exit 0?
+/lore what are the cross-repo dependencies?
+/lore my personal notes on the auth module
+```
+
+---
+
+### /lore save \<text\>
+
+Save a reasoning record. Type is auto-detected from the text:
+
+- Text containing "decided", "chose", "using", "went with" → `decision`
+- Text containing "risk", "concern", "vulnerable", "could fail" → `risk`
+- Text containing "defer", "later", "TODO", "not now", "parked" → `deferred`
+- Otherwise → `decision` (default)
+
+Calls `reasoning_log(type, content, symbol?, repo)`.
+
+```
+/lore save we decided to use libsql because it supports both local and remote without migration
+/lore save risk: session token storage does not meet new compliance requirements
+/lore save defer: add rate limiting to /api/sessions/observations — not blocking v1
+```
+
+---
+
+### /lore log decision \<text\>
+
+Explicit decision record. Always writes type `decision`.
+
+```
+/lore log decision port 37778 chosen to avoid collision with claude-mem on 37777
+/lore log decision @libsql/client chosen over better-sqlite3 because better-sqlite3 fails under Bun
+```
+
+---
+
+### /lore log risk \<text\>
+
+Explicit risk record.
+
+```
+/lore log risk personal.db must never be synced to Turso — contains developer-only notes
+/lore log risk hook scripts that throw will block Claude Code operations — always exit 0
+```
+
+---
+
+### /lore log defer \<text\>
+
+Explicit deferred work item.
+
+```
+/lore log defer add Turso sync support to personal.db — currently local only
+/lore log defer write integration tests for the MCP portfolio tools
+```
+
+---
+
+### /lore review
+
+Show all pending extracted records awaiting human confirmation.
+
+Calls `GET /api/records/pending?repo={cwd}`.
+
+Returns a table of unconfirmed records with id, type, content preview, and created_at.
+Use `/lore confirm <id>` to promote a record to `confirmed`.
+
+```
+/lore review
+```
+
+---
+
+### /lore confirm \<id\>
+
+Confirm a pending record. Promotes confidence from `extracted` or `inferred` to `confirmed`.
+
+Calls `POST /api/records/confirm` with `{ id, table }`.
+
+The confirmed_by field is set from `git config user.name`.
+
+```
+/lore confirm dec-abc123
+/lore confirm risk-def456
+```
+
+---
+
+### /lore status
+
+Show a summary of the current session context.
+
+Calls `GET /api/context/inject?repo={cwd}&session_id={session_id}`.
+
+Returns the context string that was injected at session start: last session summary,
+open deferred items, high-confidence decisions, and active risks.
+
+```
+/lore status
+```
+
+---
+
+### /lore bootstrap
+
+Run the bootstrap wizard for the current repo.
+
+Calls `POST /api/bootstrap/run` with the current repo and cwd.
+
+Launches the interactive template wizard. Equivalent to `claude-lore bootstrap` in the
+terminal, but accessible from within Claude Code without leaving the session.
+
+```
+/lore bootstrap
+/lore bootstrap --framework owasp-top10
+```
+
+---
+
+## Behavior rules
+
+- `/lore <question>` is always read-only. No write tools are called.
+- `/lore save`, `/lore log *` are the only commands that write to the graph.
+- All written records get `confidence: "extracted"` — only humans can set `confirmed`.
+- Personal records (`[personal]` tag) are never included in shared context, exports, or
+  any response visible to other agents or developers.
+- If the worker is not running, all commands fail with:
+  `Worker not running. Start it with: claude-lore worker start`

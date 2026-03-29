@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node ${CLAUDE_PLUGIN_ROOT}/../../packages/hooks/claude-code/context-hook.js"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "node ${CLAUDE_PLUGIN_ROOT}/../../packages/hooks/claude-code/intent-hook.js"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "node ${CLAUDE_PLUGIN_ROOT}/../../packages/hooks/claude-code/observe-hook.js",
+        "matcher": "Write|Edit|Bash|NotebookEdit"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node ${CLAUDE_PLUGIN_ROOT}/../../packages/hooks/claude-code/summary-hook.js"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "type": "command",
+        "command": "node ${CLAUDE_PLUGIN_ROOT}/../../packages/hooks/claude-code/cleanup-hook.js"
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "claude-lore",
+  "metadata": {
+    "description": "Structural + reasoning knowledge graph for AI coding agents. Persistent memory of decisions, deferred work, and risks across sessions."
+  },
+  "owner": {
+    "name": "claude-lore"
+  },
+  "plugins": [
+    {
+      "name": "claude-lore",
+      "description": "Persistent reasoning knowledge graph for AI coding agents",
+      "version": "0.2.0",
+      "author": {
+        "name": "claude-lore"
+      },
+      "source": {
+        "source": "github",
+        "repo": "YOUR_USERNAME/claude-lore"
+      },
+      "category": "productivity",
+      "keywords": ["memory", "knowledge-graph", "adr", "context", "reasoning"]
+    }
+  ]
+}
