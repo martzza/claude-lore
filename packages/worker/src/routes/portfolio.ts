@@ -7,6 +7,7 @@ import {
   removeRepoFromPortfolio,
   listPortfolios,
   getPortfolio,
+  findPortfolioForRepo,
 } from "../services/portfolio/service.js";
 import { generateManifest, syncToRegistry } from "../services/manifest/service.js";
 import { registryDb, sessionsDb } from "../services/sqlite/db.js";
@@ -211,6 +212,17 @@ router.get("/status", async (req, res) => {
     shared_risks: riskCounts,
     open_deferred: openDeferred,
   });
+});
+
+// GET /api/portfolio/current?repo= — find which portfolio this repo belongs to
+router.get("/current", (req, res) => {
+  const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
+  if (!repo) {
+    res.status(400).json({ error: "repo query param required" });
+    return;
+  }
+  const portfolio = findPortfolioForRepo(repo);
+  res.json({ ok: true, portfolio: portfolio ?? null });
 });
 
 export default router;

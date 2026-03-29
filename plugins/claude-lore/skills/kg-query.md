@@ -58,6 +58,8 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "which tasks are safe to parallelise" | `parallelism_check(tasks, repo)` |
 | "what's my workflow like / how am I working" | `workflow_summary(repo)` |
 | "what should I work on next" | `workflow_summary(repo)` + `session_handover(repo)` + deferred items from `session_load` |
+| "/lore help" or "/lore" with no arguments | `get_lore_help()` — return full reference card as formatted text |
+| "/lore help <command>" | `get_lore_help(command)` — return detailed help for that command |
 | "/lore improve / how can I improve / what should I change" | `advisor_summary(repo, cwd)` — present findings in conversational prose, not CLI format |
 | "/lore workflow" | `workflow_summary(repo)` — explain patterns and recommendations conversationally |
 | "/lore parallel" | `parallelism_check` on open deferred items — explain which tasks can run in parallel and why |

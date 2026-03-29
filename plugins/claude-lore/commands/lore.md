@@ -1,6 +1,6 @@
 ---
 description: Query and write to the claude-lore knowledge graph. Use for /lore questions about decisions, risks, deferred work, session history, and cross-repo dependencies.
-argument-hint: <question> | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap
+argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol>
 allowed-tools: [Read, Glob, Grep]
 ---
 
@@ -11,6 +11,22 @@ Query and write to the claude-lore knowledge graph from within Claude Code.
 ---
 
 ## Command reference
+
+### /lore help
+
+Show the full in-chat command reference.
+
+Calls `get_lore_help()` via MCP and returns a comprehensive reference card
+covering all /lore commands with usage examples.
+
+```
+/lore help
+/lore help improve
+/lore help parallel
+/lore help workflow
+```
+
+---
 
 ### /lore improve
 
@@ -193,6 +209,44 @@ terminal, but accessible from within Claude Code without leaving the session.
 ```
 /lore bootstrap
 /lore bootstrap --framework owasp-top10
+```
+
+---
+
+### /lore graph
+
+Open the decision hierarchy graph in browser.
+
+Equivalent to running `claude-lore graph decisions --open` in the terminal.
+
+```
+/lore graph
+```
+
+---
+
+### /lore annotate \<file\>
+
+Open a source file with reasoning annotations overlaid in browser.
+
+Calls `annotate_file(file_path, repo)` via MCP and opens the result.
+
+```
+/lore annotate src/services/auth.ts
+/lore annotate packages/worker/src/routes/sessions.ts
+```
+
+---
+
+### /lore provenance \<symbol\>
+
+Show the full chronological history of how a symbol came to exist.
+
+Calls `provenance_trace(symbol, repo)` via MCP.
+
+```
+/lore provenance resolveIdentity
+/lore provenance buildContextString
 ```
 
 ---

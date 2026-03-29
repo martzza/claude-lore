@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { confirmRecord, discardRecord, discardBySource, getPendingRecords } from "../services/reasoning/service.js";
+import { sessionsDb } from "../services/sqlite/db.js";
 import { requireScope } from "../middleware/auth.js";
 
 const router = Router();
@@ -70,6 +71,33 @@ router.get("/pending", async (req, res) => {
   const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
   const records = await getPendingRecords(repo);
   res.json({ records, count: records.length, total: records.length });
+});
+
+// GET /api/records/counts?repo= — summary counts for status command
+router.get("/counts", async (req, res) => {
+  const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
+  if (!repo) {
+    res.status(400).json({ error: "repo query param required" });
+    return;
+  }
+  const [decRes, riskRes, defRes, pendingRecords] = await Promise.all([
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM decisions WHERE repo = ?`, args: [repo] }),
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM risks WHERE repo = ?`, args: [repo] }),
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM deferred_work WHERE repo = ? AND status = 'open'`, args: [repo] }),
+    getPendingRecords(repo),
+  ]);
+  const blockedRes = await sessionsDb.execute({
+    sql: `SELECT COUNT(*) as c FROM deferred_work WHERE repo = ? AND status = 'blocked'`,
+    args: [repo],
+  });
+  res.json({
+    ok: true,
+    decisions:        Number(decRes.rows[0]!["c"] ?? 0),
+    risks:            Number(riskRes.rows[0]!["c"] ?? 0),
+    deferred:         Number(defRes.rows[0]!["c"] ?? 0),
+    deferred_blocked: Number(blockedRes.rows[0]!["c"] ?? 0),
+    pending_review:   pendingRecords.length,
+  });
 });
 
 export default router;

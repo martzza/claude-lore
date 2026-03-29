@@ -267,9 +267,10 @@ manifestCmd
 const advisorCmd = program
   .command("advisor")
   .description("Proactive advisor — surface knowledge gaps, CLAUDE.md issues, and skill gaps")
-  .action(async () => {
+  .option("--json", "Output as JSON")
+  .action(async (opts: { json?: boolean }) => {
     const { advisorSummary } = await import("./commands/advisor.js");
-    await advisorSummary();
+    await advisorSummary(opts);
   });
 
 advisorCmd
@@ -370,6 +371,45 @@ agentsCmd
   .action(async (agent: string, opts: { symbol?: string }) => {
     const { agentsRun } = await import("./commands/agents.js");
     await agentsRun(agent, opts);
+  });
+
+// claude-lore help
+program
+  .command("help [command]")
+  .description("Show command reference, or detailed help for a specific command")
+  .action(async (commandName?: string) => {
+    const { runHelp } = await import("./commands/help.js");
+    runHelp(commandName);
+  });
+
+// claude-lore status
+program
+  .command("status")
+  .description("Current repo state at a glance")
+  .option("--json", "Output as JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const { runStatus } = await import("./commands/status.js");
+    await runStatus(opts);
+  });
+
+// claude-lore doctor
+program
+  .command("doctor")
+  .description("Verify everything is wired up correctly")
+  .option("--fix", "Apply automatic fixes where safe")
+  .option("--json", "Output results as JSON")
+  .action(async (opts: { fix?: boolean; json?: boolean }) => {
+    const { runDoctor } = await import("./commands/doctor.js");
+    await runDoctor(opts);
+  });
+
+// claude-lore update
+program
+  .command("update")
+  .description("Rebuild CLI binary and restart worker")
+  .action(async () => {
+    const { runUpdate } = await import("./commands/update.js");
+    await runUpdate();
   });
 
 program.parseAsync(process.argv).catch((err) => {

@@ -7,8 +7,30 @@ import { analyseSkillGaps } from "../../services/advisor/skills.js";
 import { analyseParallelism, analyseParallelismFromDeferred } from "../../services/advisor/parallel.js";
 import { analyseWorkflow } from "../../services/advisor/workflow.js";
 import { getLastSessionSummary, getOpenDeferredWork } from "../../services/sessions/service.js";
+import { renderFullReference, renderCommandHelp } from "../../services/help/lore-help.js";
 
 export function registerAdvisorTools(server: McpServer): void {
+  // -------------------------------------------------------------------------
+  // get_lore_help — in-chat help system for /lore commands
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_lore_help",
+    "Returns help content for /lore in-chat commands. Without a command argument, returns the full quick reference. With a command name (e.g. 'improve', 'parallel'), returns detailed help for that specific command.",
+    {
+      command: z
+        .string()
+        .optional()
+        .describe("The /lore command to get help for (e.g. 'improve', 'parallel', 'status'). Omit for the full reference."),
+    },
+    async ({ command }) => {
+      const text = command ? renderCommandHelp(command) : renderFullReference();
+      return {
+        content: [{ type: "text" as const, text }],
+      };
+    },
+  );
+
+
   // -------------------------------------------------------------------------
   // advisor_summary — all five analyses in one call
   // -------------------------------------------------------------------------

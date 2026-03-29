@@ -379,7 +379,7 @@ export async function advisorWorkflow(opts: { days?: number }): Promise<void> {
 // advisor (top-level summary)
 // ---------------------------------------------------------------------------
 
-export async function advisorSummary(): Promise<void> {
+export async function advisorSummary(opts: { json?: boolean } = {}): Promise<void> {
   const repo = process.cwd();
   await assertWorkerRunning();
 
@@ -396,6 +396,11 @@ export async function advisorSummary(): Promise<void> {
   const skills = skillsRes.status === "fulfilled" ? (await skillsRes.value.json()) as SkillGapAnalysis : null;
   const parallel = parallelRes.status === "fulfilled" ? (await parallelRes.value.json()) as ParallelismAnalysis : null;
   const workflow = workflowRes.status === "fulfilled" ? (await workflowRes.value.json()) as WorkflowAnalysis : null;
+
+  if (opts.json) {
+    console.log(JSON.stringify({ repo, gaps, claude_md: claudeMd, skills, parallel, workflow }, null, 2));
+    return;
+  }
 
   console.log("\nclaude-lore advisor summary\n");
 
