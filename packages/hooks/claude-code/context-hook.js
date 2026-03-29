@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // SessionStart hook — fetches prior context from worker and injects it as a system message
-import { readFileSync } from "fs";
+import { readFileSync, existsSync, unlinkSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 
 const PORT = process.env.CLAUDE_LORE_PORT ?? "37778";
+const NUDGE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 async function main() {
   let input = {};
@@ -23,6 +26,31 @@ async function main() {
     });
   } catch {}
 
+  // Check for a post-session nudge from last session (show once, then delete)
+  let nudgeSection = "";
+  const nudgePath = join(homedir(), ".codegraph", "last-session-nudge.txt");
+  try {
+    if (existsSync(nudgePath)) {
+      const raw = readFileSync(nudgePath, "utf8");
+      const tsMatch = raw.match(/^ts=(\d+)/);
+      const ts = tsMatch ? parseInt(tsMatch[1], 10) : 0;
+      if (Date.now() - ts < NUDGE_TTL_MS) {
+        const lines = raw
+          .split("\n")
+          .filter((l) => !l.startsWith("ts=") && l.trim().length > 0)
+          .map((l) => l.trim());
+        if (lines.length > 0) {
+          nudgeSection =
+            "\n### From last session\n─────────────────────\n" +
+            lines.join("\n") +
+            "\n";
+        }
+      }
+      // Always delete after reading (show once)
+      unlinkSync(nudgePath);
+    }
+  } catch {}
+
   // Fetch context to inject
   try {
     const res = await fetch(
@@ -31,11 +59,18 @@ async function main() {
     );
     if (res.ok) {
       const data = await res.json();
-      if (data.context) {
-        process.stdout.write(data.context);
+      const context = (data.context ?? "") + nudgeSection;
+      if (context.trim()) {
+        process.stdout.write(context);
       }
+    } else if (nudgeSection) {
+      process.stdout.write(nudgeSection);
     }
-  } catch {}
+  } catch {
+    if (nudgeSection) {
+      process.stdout.write(nudgeSection);
+    }
+  }
 }
 
 main()

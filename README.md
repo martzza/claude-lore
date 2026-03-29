@@ -62,7 +62,7 @@ Agents query the graph via MCP — available to both Claude Code and Cursor:
 
 ```bash
 npm install -g pm2
-git clone https://github.com/YOUR_USERNAME/claude-lore
+git clone https://github.com/martzza/claude-lore
 cd claude-lore
 pnpm install
 pm2 start ecosystem.config.js

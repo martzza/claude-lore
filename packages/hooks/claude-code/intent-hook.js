@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// UserPromptSubmit hook — detects decision/risk/deferral keywords and logs observations
+// UserPromptSubmit hook — detects decision/risk/deferral/planning keywords and logs observations
 import { readFileSync } from "fs";
 
 const PORT = process.env.CLAUDE_LORE_PORT ?? "37778";
@@ -29,6 +29,19 @@ const DEFER_PATTERNS = [
   /\bfollow.?up\b/i,
 ];
 
+const PLANNING_SIGNALS = [
+  /what should i work on/i,
+  /what'?s next/i,
+  /where should i start/i,
+  /what to do next/i,
+  /help me plan/i,
+  /what'?s the priority/i,
+  /what can i do in parallel/i,
+  /should i work on/i,
+  /what('s| is) the next step/i,
+  /where do i start/i,
+];
+
 async function main() {
   let input = {};
   try {
@@ -42,30 +55,46 @@ async function main() {
   const matchedDecision = DECISION_PATTERNS.some((p) => p.test(prompt));
   const matchedRisk = RISK_PATTERNS.some((p) => p.test(prompt));
   const matchedDefer = DEFER_PATTERNS.some((p) => p.test(prompt));
+  const matchedPlanning = PLANNING_SIGNALS.some((p) => p.test(prompt));
 
-  if (!matchedDecision && !matchedRisk && !matchedDefer) return;
+  const observations = [];
 
-  const tags = [
-    matchedDecision ? "decision" : null,
-    matchedRisk ? "risk" : null,
-    matchedDefer ? "deferred" : null,
-  ]
-    .filter(Boolean)
-    .join(",");
+  // Log decision/risk/defer intent
+  if (matchedDecision || matchedRisk || matchedDefer) {
+    const tags = [
+      matchedDecision ? "decision" : null,
+      matchedRisk ? "risk" : null,
+      matchedDefer ? "deferred" : null,
+    ]
+      .filter(Boolean)
+      .join(",");
+    observations.push({ tool_name: `intent:${tags}`, content: prompt.slice(0, 2000) });
+  }
 
-  try {
-    await fetch(`http://127.0.0.1:${PORT}/api/sessions/observations`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        session_id: sessionId,
-        repo,
-        tool_name: `intent:${tags}`,
-        content: prompt.slice(0, 2000),
-      }),
-      signal: AbortSignal.timeout(3000),
+  // Log planning signal (triggers advisor cache pre-warm in worker)
+  if (matchedPlanning) {
+    const signals = PLANNING_SIGNALS.filter((p) => p.test(prompt)).map((p) => p.source);
+    observations.push({
+      tool_name: "planning-signal",
+      content: JSON.stringify({ prompt: prompt.slice(0, 500), signals }),
     });
-  } catch {}
+  }
+
+  for (const obs of observations) {
+    try {
+      await fetch(`http://127.0.0.1:${PORT}/api/sessions/observations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          repo,
+          tool_name: obs.tool_name,
+          content: obs.content,
+        }),
+        signal: AbortSignal.timeout(3000),
+      });
+    } catch {}
+  }
 }
 
 main()

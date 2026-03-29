@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { isAbsolute, resolve } from "path";
 import { analyseKnowledgeGaps } from "../services/advisor/gaps.js";
-import { analyseClaudeMd } from "../services/advisor/claudemd.js";
+import { analyseClaudeMd, applyClaudeMdSuggestions } from "../services/advisor/claudemd.js";
 import { analyseSkillGaps } from "../services/advisor/skills.js";
 import { analyseParallelism, analyseParallelismFromDeferred } from "../services/advisor/parallel.js";
 import { analyseWorkflow } from "../services/advisor/workflow.js";
@@ -108,6 +108,24 @@ router.get("/parallel", async (req, res) => {
     analysis = await analyseParallelismFromDeferred(repo);
   }
   res.json(analysis);
+});
+
+// POST /api/advisor/claudemd/apply { repo, cwd, mode }
+const ApplyBody = z.object({
+  repo: z.string().min(1),
+  cwd: absolutePath,
+  mode: z.enum(["all", "interactive"]).default("all"),
+});
+
+router.post("/claudemd/apply", async (req, res) => {
+  const parsed = ApplyBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const analysis = await analyseClaudeMd(parsed.data.repo, parsed.data.cwd);
+  await applyClaudeMdSuggestions(parsed.data.cwd, analysis.findings, parsed.data.mode);
+  res.json({ ok: true, applied: analysis.findings.length });
 });
 
 // GET /api/advisor/workflow?repo=&days=60

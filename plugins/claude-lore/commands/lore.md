@@ -1,6 +1,6 @@
 ---
 description: Query and write to the claude-lore knowledge graph. Use for /lore questions about decisions, risks, deferred work, session history, and cross-repo dependencies.
-argument-hint: <question> | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap
+argument-hint: <question> | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap
 allowed-tools: [Read, Glob, Grep]
 ---
 
@@ -11,6 +11,60 @@ Query and write to the claude-lore knowledge graph from within Claude Code.
 ---
 
 ## Command reference
+
+### /lore improve
+
+Show all advisor recommendations in conversational prose.
+
+Calls `advisor_summary(repo, cwd)` via MCP and presents findings as readable,
+actionable suggestions — not CLI output, not raw JSON. Covers CLAUDE.md issues,
+knowledge gaps, workflow patterns, parallelism opportunities, and skill gaps.
+
+```
+/lore improve
+```
+
+---
+
+### /lore workflow
+
+Show workflow patterns detected from session history and specific recommendations.
+
+Calls `workflow_summary(repo)` and presents findings conversationally: what patterns
+have been detected, why they matter, and what to change.
+
+```
+/lore workflow
+```
+
+---
+
+### /lore parallel
+
+Show which current deferred items can be worked on in parallel.
+
+Calls `parallelism_check` on open deferred items and explains which tasks are safe
+to run simultaneously, which have dependencies, and provides subagent prompts for
+parallelisable groups.
+
+```
+/lore parallel
+```
+
+---
+
+### /lore skills
+
+Show the skills gap report for this repo.
+
+Calls the skills onboarding report and explains which canonical team skills you have
+installed, which are missing, and the exact commands to install them.
+
+```
+/lore skills
+```
+
+---
 
 ### /lore \<question\>
 

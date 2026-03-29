@@ -148,3 +148,58 @@ export async function getOpenDeferredWork(repo: string): Promise<unknown[]> {
   });
   return result.rows;
 }
+
+export async function checkFirstRun(repo: string): Promise<boolean> {
+  const [sessionsRes, decisionsRes, risksRes, deferredRes] = await Promise.all([
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM sessions WHERE repo = ?`, args: [repo] }),
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM decisions WHERE repo = ?`, args: [repo] }),
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM risks WHERE repo = ?`, args: [repo] }),
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM deferred_work WHERE repo = ?`, args: [repo] }),
+  ]);
+  const sessions = Number(sessionsRes.rows[0]!["c"] ?? 0);
+  const decisions = Number(decisionsRes.rows[0]!["c"] ?? 0);
+  const risks = Number(risksRes.rows[0]!["c"] ?? 0);
+  const deferred = Number(deferredRes.rows[0]!["c"] ?? 0);
+  return sessions === 0 && decisions === 0 && risks === 0 && deferred === 0;
+}
+
+export async function getSessionStats(
+  sessionId: string,
+  repo: string,
+): Promise<{ observation_count: number; modules_touched: number; unconfirmed_decisions: number }> {
+  const sessionRes = await sessionsDb.execute({
+    sql: `SELECT started_at FROM sessions WHERE id = ?`,
+    args: [sessionId],
+  });
+  const startedAt = sessionRes.rows.length > 0
+    ? Number((sessionRes.rows[0] as Record<string, unknown>)["started_at"] ?? 0)
+    : 0;
+
+  const [obsRes, decisionsRes] = await Promise.all([
+    sessionsDb.execute({
+      sql: `SELECT content FROM observations WHERE session_id = ?`,
+      args: [sessionId],
+    }),
+    sessionsDb.execute({
+      sql: `SELECT COUNT(*) as c FROM decisions WHERE repo = ? AND confidence != 'confirmed' AND created_at > ?`,
+      args: [repo, startedAt],
+    }),
+  ]);
+
+  // Extract unique top-level modules from file paths in observation content
+  const filePathPattern = /(\/[^\s"']+\.[a-zA-Z]{1,6})/g;
+  const modules = new Set<string>();
+  for (const row of obsRes.rows) {
+    const content = String((row as Record<string, unknown>)["content"] ?? "");
+    for (const match of content.matchAll(filePathPattern)) {
+      const parts = match[1]!.split("/").filter(Boolean);
+      if (parts.length > 1) modules.add(parts[0]!);
+    }
+  }
+
+  return {
+    observation_count: obsRes.rows.length,
+    modules_touched: modules.size,
+    unconfirmed_decisions: Number(decisionsRes.rows[0]!["c"] ?? 0),
+  };
+}

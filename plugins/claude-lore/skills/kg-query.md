@@ -58,6 +58,11 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "which tasks are safe to parallelise" | `parallelism_check(tasks, repo)` |
 | "what's my workflow like / how am I working" | `workflow_summary(repo)` |
 | "what should I work on next" | `workflow_summary(repo)` + `session_handover(repo)` + deferred items from `session_load` |
+| "/lore improve / how can I improve / what should I change" | `advisor_summary(repo, cwd)` — present findings in conversational prose, not CLI format |
+| "/lore workflow" | `workflow_summary(repo)` — explain patterns and recommendations conversationally |
+| "/lore parallel" | `parallelism_check` on open deferred items — explain which tasks can run in parallel and why |
+| "/lore skills" | `annotation_coverage(repo, cwd)` then skills onboarding report — explain gaps conversationally |
+| "should I update CLAUDE.md / is my CLAUDE.md good" | `advisor_summary(repo, cwd)` → filter to claudemd findings |
 | "write me a handover / end of session summary" | `session_handover(repo)` then session-handover agent |
 | "why is X written this way / why does X exist" | `provenance_trace(symbol=X, repo)` |
 | "annotate this file / show me the reasoning for this code" | `annotate_file(file_path, repo)` |
@@ -95,6 +100,32 @@ exactly — do not strip, rephrase, or promote the confidence level:
 7. Output the three sections in order.
 
 ---
+
+## Advisor commands — conversational format
+
+When handling `/lore improve`, `/lore workflow`, `/lore parallel`, or `/lore skills`,
+**do not** use the FACTS / ANALYSIS / GAPS format. Instead, respond in natural
+conversational prose with specific, actionable suggestions:
+
+- Lead with the most important finding
+- Use plain language, not CLI output style
+- Include exact commands the developer should run
+- Group related findings under short headings if there are many
+- End with one clear "highest priority action" recommendation
+
+Example of good advisor output:
+```
+Your CLAUDE.md is 6,200 tokens — that's a significant chunk of context on every session.
+The biggest win would be moving the API reference tables to a separate file and linking
+to it. That alone would save ~2,000 tokens per session.
+
+You also have 3 deferred items that can run in parallel today:
+• "Add validation to auth endpoints" — no symbol overlap with others
+• "Update telemetry schema" — independent module
+These are safe to tackle simultaneously with subagents.
+
+Highest priority: run `claude-lore advisor claudemd --apply` to trim the CLAUDE.md bloat.
+```
 
 ## Strict read-only rule
 

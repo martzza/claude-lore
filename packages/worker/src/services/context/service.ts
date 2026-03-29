@@ -2,24 +2,114 @@ import { getLastSessionSummary, getOpenDeferredWork } from "../sessions/service.
 import { analyseKnowledgeGaps } from "../advisor/gaps.js";
 import { analyseParallelismFromDeferred } from "../advisor/parallel.js";
 import { analyseWorkflow } from "../advisor/workflow.js";
+import { analyseClaudeMd } from "../advisor/claudemd.js";
 import { findPortfolioForRepo } from "../portfolio/service.js";
 import { registryDb } from "../sqlite/db.js";
+
+// ---------------------------------------------------------------------------
+// In-memory advisor cache (pre-warmed on planning-signal observations)
+// ---------------------------------------------------------------------------
+
+interface CachedAdvisor {
+  lines: string[];
+  expires: number;
+}
+
+const advisorCache = new Map<string, CachedAdvisor>();
+const ADVISOR_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function computeAdvisorLines(repo: string, cwd: string): Promise<string[]> {
+  const [gapAdvisory, parallelAdvisory, workflowAdvisory, claudeMdAnalysis] = await Promise.all([
+    analyseKnowledgeGaps(repo, cwd),
+    analyseParallelismFromDeferred(repo),
+    analyseWorkflow(repo, 60),
+    analyseClaudeMd(repo, cwd).catch(() => null),
+  ]);
+
+  const lines: string[] = [];
+
+  // Priority 1: critical knowledge gaps
+  if (gapAdvisory.total_gap_score >= 10 && gapAdvisory.priority_gaps.length > 0) {
+    const top = gapAdvisory.priority_gaps[0];
+    lines.push(
+      `⚠  ${gapAdvisory.priority_gaps.length} critical gap${gapAdvisory.priority_gaps.length !== 1 ? "s" : ""} (score: ${gapAdvisory.total_gap_score})${top ? ` — e.g. "${top.description?.slice(0, 60) ?? ""}"` : ""} — run \`claude-lore advisor gaps\``,
+    );
+  } else if (gapAdvisory.total_gap_score > 0) {
+    lines.push(
+      `⚠  ${gapAdvisory.priority_gaps.length + gapAdvisory.quick_wins.length} knowledge gap(s) (score: ${gapAdvisory.total_gap_score}) — run \`claude-lore advisor gaps\``,
+    );
+  }
+
+  // Priority 2: workflow patterns
+  if (workflowAdvisory.recommendations.length > 0) {
+    const topRec = workflowAdvisory.recommendations[0]!;
+    lines.push(`📋 Workflow pattern (${workflowAdvisory.sessions_analysed} sessions): ${topRec.title}`);
+    if (topRec.rationale) {
+      lines.push(`   ${topRec.rationale.slice(0, 100)}`);
+    }
+  }
+
+  // Priority 3: CLAUDE.md issues
+  if (claudeMdAnalysis?.findings && claudeMdAnalysis.findings.length > 0) {
+    const redundant = claudeMdAnalysis.findings.filter((f) => f.type === "redundant");
+    const missing = claudeMdAnalysis.findings.filter((f) => f.type === "missing");
+    const optimise = claudeMdAnalysis.findings.filter((f) => f.type === "optimise");
+    if (optimise.length > 0 && claudeMdAnalysis.token_estimate > 0) {
+      lines.push(
+        `💡 CLAUDE.md is ~${claudeMdAnalysis.token_estimate} tokens. Run: \`claude-lore advisor claudemd --apply\``,
+      );
+    } else if (redundant.length > 0) {
+      lines.push(
+        `💡 CLAUDE.md has ${redundant.length} section${redundant.length !== 1 ? "s" : ""} that may duplicate graph records. Run: \`claude-lore advisor claudemd --apply\``,
+      );
+    } else if (missing.length > 0) {
+      lines.push(
+        `💡 CLAUDE.md is missing ${missing.length} section${missing.length !== 1 ? "s" : ""}. Run: \`claude-lore advisor claudemd --apply\``,
+      );
+    }
+  }
+
+  // Priority 4: parallelism opportunities
+  if (parallelAdvisory.parallel_groups.length > 0) {
+    const group = parallelAdvisory.parallel_groups[0];
+    const taskNames = group?.tasks.slice(0, 3).map((t) => `"${t.description.slice(0, 40)}"`) ?? [];
+    lines.push(
+      `🔀 ${parallelAdvisory.analysed_items} deferred items — ${parallelAdvisory.parallel_groups.length} group${parallelAdvisory.parallel_groups.length !== 1 ? "s" : ""} can run in parallel:`,
+    );
+    for (const name of taskNames) {
+      lines.push(`   ${name}`);
+    }
+    lines.push("   Run: `claude-lore advisor parallel --from-deferred`");
+  }
+
+  return lines;
+}
+
+export function warmAdvisorCache(repo: string, cwd: string): void {
+  computeAdvisorLines(repo, cwd)
+    .then((lines) => {
+      advisorCache.set(repo, { lines, expires: Date.now() + ADVISOR_CACHE_TTL });
+    })
+    .catch(() => {});
+}
+
+async function getAdvisorLines(repo: string, cwd: string): Promise<string[]> {
+  const cached = advisorCache.get(repo);
+  if (cached && cached.expires > Date.now()) {
+    return cached.lines;
+  }
+  return computeAdvisorLines(repo, cwd);
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio section
+// ---------------------------------------------------------------------------
 
 async function buildPortfolioSection(
   repo: string,
   portfolioName: string,
 ): Promise<string[]> {
   try {
-    // Find symbols this repo exports that appear in other repos in the portfolio
-    const consumed = await registryDb.execute({
-      sql: `SELECT symbol, repo FROM cross_repo_index
-            WHERE portfolio = ? AND repo != ?
-            ORDER BY indexed_at DESC
-            LIMIT 10`,
-      args: [portfolioName, repo],
-    });
-
-    // Find symbols from other repos used by this repo (via cross_repo_index)
     const depends = await registryDb.execute({
       sql: `SELECT symbol, repo FROM cross_repo_index
             WHERE portfolio = ? AND repo != ?
@@ -56,6 +146,10 @@ async function buildPortfolioSection(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Main context builder
+// ---------------------------------------------------------------------------
+
 export async function buildContextString(repo: string, cwd?: string): Promise<string> {
   const [lastSession, deferred] = await Promise.all([
     getLastSessionSummary(repo),
@@ -68,7 +162,6 @@ export async function buildContextString(repo: string, cwd?: string): Promise<st
 
   const parts: string[] = [`## claude-lore: session context — ${repoBasename}${portfolioTag}\n`];
 
-  // Portfolio cross-repo section (only when repo is linked to a portfolio)
   if (portfolioName) {
     const portfolioLines = await buildPortfolioSection(repo, portfolioName);
     if (portfolioLines.length > 0) parts.push(...portfolioLines);
@@ -88,41 +181,26 @@ export async function buildContextString(repo: string, cwd?: string): Promise<st
     parts.push("");
   }
 
-  // Advisor section — non-blocking, max 4 lines total, 2-second timeout
+  // Advisor section — non-blocking, max 6 lines, 2-second timeout
   if (cwd) {
     try {
-      const [gapAdvisory, parallelAdvisory, workflowAdvisory] = await Promise.race([
-        Promise.all([
-          analyseKnowledgeGaps(repo, cwd),
-          analyseParallelismFromDeferred(repo),
-          analyseWorkflow(repo, 60),
-        ]),
+      const advisorLines = await Promise.race([
+        getAdvisorLines(repo, cwd),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000)),
       ]);
 
-      const advisorLines: string[] = [];
-
-      if (gapAdvisory.total_gap_score > 0) {
-        advisorLines.push(
-          `⚠ ${gapAdvisory.priority_gaps.length} knowledge gap(s) (score: ${gapAdvisory.total_gap_score}) — run \`claude-lore advisor gaps\``,
-        );
-      }
-
-      if (parallelAdvisory.parallel_groups.length > 0) {
-        advisorLines.push(
-          `🔀 ${parallelAdvisory.analysed_items} deferred items — ${parallelAdvisory.parallel_groups.length} can run in parallel (run \`claude-lore advisor parallel --from-deferred\`)`,
-        );
-      }
-
-      if (workflowAdvisory.recommendations.length > 0) {
-        const topRec = workflowAdvisory.recommendations[0]!;
-        advisorLines.push(`📋 Workflow: ${topRec.title}`);
-      }
-
       if (advisorLines.length > 0) {
-        parts.push("### claude-lore advisor");
-        for (const line of advisorLines.slice(0, 4)) {
+        const MAX_ADVISOR_LINES = 6;
+        const shown = advisorLines.slice(0, MAX_ADVISOR_LINES);
+        const overflow = advisorLines.length - MAX_ADVISOR_LINES;
+
+        parts.push("### What claude-lore suggests");
+        parts.push("─────────────────────────────");
+        for (const line of shown) {
           parts.push(line);
+        }
+        if (overflow > 0) {
+          parts.push(`\nRun \`claude-lore advisor\` for full recommendations (${overflow} more)`);
         }
         parts.push("");
       }

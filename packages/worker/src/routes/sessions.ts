@@ -4,8 +4,11 @@ import {
   initSession,
   logObservation,
   completeSession,
+  checkFirstRun,
+  getSessionStats,
 } from "../services/sessions/service.js";
 import { runCompressionPass } from "../services/compression/service.js";
+import { warmAdvisorCache } from "../services/context/service.js";
 import { requireScope } from "../middleware/auth.js";
 
 const router = Router();
@@ -49,6 +52,11 @@ router.post("/observations", async (req, res) => {
   const { session_id, repo, tool_name, content } = parsed.data;
   await logObservation(session_id, repo, tool_name, content);
   res.json({ ok: true });
+
+  // Pre-warm advisor cache when a planning signal is detected
+  if (tool_name === "planning-signal") {
+    warmAdvisorCache(repo, repo);
+  }
 });
 
 // POST /api/sessions/summarise — called by Stop hook; triggers AI compression
@@ -77,6 +85,29 @@ router.post("/complete", async (req, res) => {
   // Mark complete only if not already done by the compression pass
   await completeSession(session_id);
   res.json({ ok: true });
+});
+
+// GET /api/sessions/first-run?repo=
+router.get("/first-run", async (req, res) => {
+  const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
+  if (!repo) {
+    res.status(400).json({ error: "repo query param required" });
+    return;
+  }
+  const isFirstRun = await checkFirstRun(repo);
+  res.json({ ok: true, first_run: isFirstRun });
+});
+
+// GET /api/sessions/stats?session_id=&repo=
+router.get("/stats", async (req, res) => {
+  const sessionId = typeof req.query["session_id"] === "string" ? req.query["session_id"] : undefined;
+  const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
+  if (!sessionId || !repo) {
+    res.status(400).json({ error: "session_id and repo query params required" });
+    return;
+  }
+  const stats = await getSessionStats(sessionId, repo);
+  res.json({ ok: true, ...stats });
 });
 
 export default router;

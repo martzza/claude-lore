@@ -168,13 +168,23 @@ workerCmd
   });
 
 // claude-lore skills
-program
+const skillsCmd = program
   .command("skills")
   .description("Show skill manifest")
   .option("--diff", "Show skill drift across repos")
-  .action(async (opts: { diff?: boolean }) => {
+  .option("--onboarding", "Show team skills gap report for new developers")
+  .action(async (opts: { diff?: boolean; onboarding?: boolean }) => {
     const { runSkills } = await import("./commands/skills.js");
     await runSkills(opts);
+  });
+
+skillsCmd
+  .command("install [name]")
+  .description("Install a canonical team skill to your global skill directory")
+  .option("--all-missing", "Install all missing canonical skills at once")
+  .action(async (name: string | undefined, opts: { allMissing?: boolean }) => {
+    const { runSkillsInstall } = await import("./commands/skills.js");
+    await runSkillsInstall(name, opts);
   });
 
 // claude-lore review

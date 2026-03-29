@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join, isAbsolute, resolve } from "path";
+import { createInterface } from "readline";
 import { sessionsDb } from "../sqlite/db.js";
 
 // ---------------------------------------------------------------------------
@@ -267,4 +268,71 @@ export async function analyseClaudeMd(
     token_estimate: tokenEstimate,
     findings,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Apply suggestions to CLAUDE.md
+// ---------------------------------------------------------------------------
+
+async function rlPrompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase());
+    });
+  });
+}
+
+export async function applyClaudeMdSuggestions(
+  cwd: string,
+  findings: ClaudeMdFinding[],
+  mode: "all" | "interactive",
+): Promise<void> {
+  const claudeMdPath = join(cwd, "CLAUDE.md");
+  if (!existsSync(claudeMdPath)) return;
+
+  let content = readFileSync(claudeMdPath, "utf8");
+  const lines = content.split("\n");
+  let modified = false;
+
+  // Track line offset as we insert lines
+  let lineOffset = 0;
+
+  for (const finding of findings) {
+    if (mode === "interactive") {
+      console.log(`\n  Finding: ${finding.description}`);
+      if (finding.suggestion) console.log(`  Suggestion: ${finding.suggestion}`);
+      const answer = await rlPrompt("  Apply this suggestion? (y/N): ");
+      if (answer !== "y" && answer !== "yes") continue;
+    }
+
+    if (finding.type === "redundant" && finding.line) {
+      // Add comment marker above the line (non-destructive)
+      const idx = finding.line - 1 + lineOffset;
+      if (idx >= 0 && idx < lines.length) {
+        lines.splice(idx, 0, `<!-- claude-lore: this content may duplicate graph records — consider removing after confirming with \`claude-lore review\` -->`);
+        lineOffset++;
+        modified = true;
+      }
+    } else if (finding.type === "missing") {
+      // Append to bottom
+      const suggestion = finding.suggestion ?? finding.description;
+      const section = `\n<!-- claude-lore: auto-generated suggestion -->\n${suggestion}\n`;
+      lines.push(section);
+      modified = true;
+    } else if (finding.type === "outdated" && finding.line) {
+      // Add inline note below the line
+      const idx = finding.line + lineOffset; // insert after
+      if (idx >= 0 && idx <= lines.length) {
+        lines.splice(idx, 0, `<!-- claude-lore: potentially outdated — ${finding.suggestion ?? "review this section"} -->`);
+        lineOffset++;
+        modified = true;
+      }
+    }
+  }
+
+  if (modified) {
+    writeFileSync(claudeMdPath, lines.join("\n"), "utf8");
+  }
 }
