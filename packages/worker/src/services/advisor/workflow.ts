@@ -313,16 +313,21 @@ function buildRecommendations(
 export async function analyseWorkflow(
   repo: string,
   days: number,
+  service?: string,
 ): Promise<WorkflowAnalysis> {
   const cutoff = Date.now() - days * MS_PER_DAY;
+
+  const sessionArgs: (string | number | null)[] = [repo, cutoff];
+  const svcClause = service !== undefined ? "AND service IS ?" : "";
+  if (service !== undefined) sessionArgs.push(service ?? null);
 
   // Load sessions in window
   const sessionRes = await sessionsDb.execute({
     sql: `SELECT id, summary, started_at, ended_at
           FROM sessions
-          WHERE repo = ? AND status = 'complete' AND started_at >= ?
+          WHERE repo = ? AND status = 'complete' AND started_at >= ? ${svcClause}
           ORDER BY started_at ASC`,
-    args: [repo, cutoff],
+    args: sessionArgs,
   });
   const sessions = sessionRes.rows.map((r) => asSession(r as Record<string, unknown>));
 

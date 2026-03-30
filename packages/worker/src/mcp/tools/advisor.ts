@@ -142,11 +142,12 @@ export function registerAdvisorTools(server: McpServer): void {
         .max(50)
         .optional()
         .describe("Task descriptions to analyse. If omitted, reads open deferred items from the DB."),
+      service: z.string().optional().describe("Service/package name to scope deferred item lookup within a monorepo"),
     },
-    async ({ repo, tasks }) => {
+    async ({ repo, tasks, service }) => {
       const analysis = tasks && tasks.length > 0
         ? await analyseParallelism(repo, tasks)
-        : await analyseParallelismFromDeferred(repo);
+        : await analyseParallelismFromDeferred(repo, service);
 
       return {
         content: [{ type: "text" as const, text: JSON.stringify(analysis, null, 2) }],
@@ -169,9 +170,10 @@ export function registerAdvisorTools(server: McpServer): void {
         .max(365)
         .default(60)
         .describe("Lookback window in days (default: 60)"),
+      service: z.string().optional().describe("Service/package name to scope session history within a monorepo"),
     },
-    async ({ repo, days }) => {
-      const analysis = await analyseWorkflow(repo, days);
+    async ({ repo, days, service }) => {
+      const analysis = await analyseWorkflow(repo, days, service);
       // Return top 3 recommendations with patterns for context
       const result = {
         sessions_analysed: analysis.sessions_analysed,
@@ -192,11 +194,12 @@ export function registerAdvisorTools(server: McpServer): void {
     "Returns a structured handover document: what was completed, what is in flight, pending reviews, and exactly what to do next. Feeds the session-handover agent.",
     {
       repo: z.string().describe("Repo identifier"),
+      service: z.string().optional().describe("Service/package name to scope the handover within a monorepo"),
     },
-    async ({ repo }) => {
+    async ({ repo, service }) => {
       const [lastSession, openDeferred] = await Promise.all([
-        getLastSessionSummary(repo),
-        getOpenDeferredWork(repo),
+        getLastSessionSummary(repo, service),
+        getOpenDeferredWork(repo, service),
       ]);
 
       const date = new Date().toISOString().slice(0, 10);

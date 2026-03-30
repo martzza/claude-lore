@@ -283,12 +283,17 @@ export async function analyseParallelism(
 /** Load open deferred items and run parallelism analysis on them. */
 export async function analyseParallelismFromDeferred(
   repo: string,
+  service?: string,
 ): Promise<ParallelismAnalysis> {
+  const args: (string | null)[] = [repo, "open"];
+  const svcClause = service !== undefined ? "AND service IS ?" : "";
+  if (service !== undefined) args.push(service ?? null);
+
   const res = await sessionsDb.execute({
     sql: `SELECT content, symbol FROM deferred_work
-          WHERE repo = ? AND status = 'open'
+          WHERE repo = ? AND status = ? ${svcClause}
           ORDER BY created_at DESC LIMIT 20`,
-    args: [repo],
+    args,
   });
 
   const tasks = res.rows.map((row) => {
