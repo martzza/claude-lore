@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 export interface Session {
   id: string;
   repo: string;
+  service: string | null;
   started_at: number;
   ended_at: number | null;
   summary: string | null;
@@ -11,12 +12,12 @@ export interface Session {
   created_at: number;
 }
 
-export async function initSession(sessionId: string, repo: string): Promise<void> {
+export async function initSession(sessionId: string, repo: string, service?: string): Promise<void> {
   const now = Date.now();
   await sessionsDb.execute({
-    sql: `INSERT OR IGNORE INTO sessions (id, repo, started_at, status, created_at)
-          VALUES (?, ?, ?, 'active', ?)`,
-    args: [sessionId, repo, now, now],
+    sql: `INSERT OR IGNORE INTO sessions (id, repo, started_at, status, created_at, service)
+          VALUES (?, ?, ?, 'active', ?, ?)`,
+    args: [sessionId, repo, now, now, service ?? null],
   });
 }
 
@@ -28,6 +29,7 @@ export async function logObservation(
   repo: string,
   toolName: string,
   content: string,
+  service?: string,
 ): Promise<void> {
   const now = Date.now();
 
@@ -49,9 +51,9 @@ export async function logObservation(
   }
 
   await sessionsDb.execute({
-    sql: `INSERT OR IGNORE INTO observations (id, session_id, repo, tool_name, content, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)`,
-    args: [randomUUID(), sessionId, repo, toolName, content, now],
+    sql: `INSERT OR IGNORE INTO observations (id, session_id, repo, tool_name, content, created_at, service)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [randomUUID(), sessionId, repo, toolName, content, now, service ?? null],
   });
 }
 
@@ -90,13 +92,14 @@ export async function saveDecision(
   content: string,
   rationale?: string,
   symbol?: string,
+  service?: string,
 ): Promise<void> {
   const now = Date.now();
   await sessionsDb.execute({
     sql: `INSERT OR IGNORE INTO decisions
-            (id, repo, session_id, symbol, content, rationale, confidence, exported_tier, anchor_status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?)`,
-    args: [randomUUID(), repo, sessionId, symbol ?? null, content, rationale ?? null, now],
+            (id, repo, session_id, symbol, content, rationale, confidence, exported_tier, anchor_status, created_at, service)
+          VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?)`,
+    args: [randomUUID(), repo, sessionId, symbol ?? null, content, rationale ?? null, now, service ?? null],
   });
 }
 
@@ -105,13 +108,14 @@ export async function saveDeferredWork(
   repo: string,
   content: string,
   symbol?: string,
+  service?: string,
 ): Promise<void> {
   const now = Date.now();
   await sessionsDb.execute({
     sql: `INSERT OR IGNORE INTO deferred_work
-            (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, status, created_at)
-          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', 'open', ?)`,
-    args: [randomUUID(), repo, sessionId, symbol ?? null, content, now],
+            (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, status, created_at, service)
+          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', 'open', ?, ?)`,
+    args: [randomUUID(), repo, sessionId, symbol ?? null, content, now, service ?? null],
   });
 }
 
@@ -120,31 +124,42 @@ export async function saveRisk(
   repo: string,
   content: string,
   symbol?: string,
+  service?: string,
 ): Promise<void> {
   const now = Date.now();
   await sessionsDb.execute({
     sql: `INSERT OR IGNORE INTO risks
-            (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at)
-          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?)`,
-    args: [randomUUID(), repo, sessionId, symbol ?? null, content, now],
+            (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service)
+          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?)`,
+    args: [randomUUID(), repo, sessionId, symbol ?? null, content, now, service ?? null],
   });
 }
 
-export async function getLastSessionSummary(repo: string): Promise<Session | null> {
+export async function getLastSessionSummary(repo: string, service?: string): Promise<Session | null> {
+  const where = ["repo = ?", "status = 'complete'", "summary IS NOT NULL"];
+  const args: (string | null)[] = [repo];
+  if (service !== undefined) {
+    where.push("service IS ?");
+    args.push(service ?? null);
+  }
   const result = await sessionsDb.execute({
-    sql: `SELECT * FROM sessions
-          WHERE repo = ? AND status = 'complete' AND summary IS NOT NULL
-          ORDER BY ended_at DESC LIMIT 1`,
-    args: [repo],
+    sql: `SELECT * FROM sessions WHERE ${where.join(" AND ")} ORDER BY ended_at DESC LIMIT 1`,
+    args,
   });
   if (result.rows.length === 0) return null;
   return result.rows[0] as unknown as Session;
 }
 
-export async function getOpenDeferredWork(repo: string): Promise<unknown[]> {
+export async function getOpenDeferredWork(repo: string, service?: string): Promise<unknown[]> {
+  const where = ["repo = ?", "status = 'open'"];
+  const args: (string | null)[] = [repo];
+  if (service !== undefined) {
+    where.push("service IS ?");
+    args.push(service ?? null);
+  }
   const result = await sessionsDb.execute({
-    sql: `SELECT * FROM deferred_work WHERE repo = ? AND status = 'open' ORDER BY created_at DESC`,
-    args: [repo],
+    sql: `SELECT * FROM deferred_work WHERE ${where.join(" AND ")} ORDER BY created_at DESC`,
+    args,
   });
   return result.rows;
 }

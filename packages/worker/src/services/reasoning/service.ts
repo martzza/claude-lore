@@ -42,9 +42,10 @@ export interface ReasoningGetResult {
 export async function getReasoningData(
   symbol?: string,
   repo?: string,
+  service?: string,
 ): Promise<ReasoningGetResult> {
   const where: string[] = [];
-  const args: unknown[] = [];
+  const args: (string | null)[] = [];
 
   if (repo) {
     where.push("repo = ?");
@@ -53,6 +54,10 @@ export async function getReasoningData(
   if (symbol) {
     where.push("symbol = ?");
     args.push(symbol);
+  }
+  if (service !== undefined) {
+    where.push("service IS ?");
+    args.push(service ?? null);
   }
 
   const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
@@ -83,6 +88,7 @@ export async function logReasoning(
   symbol?: string,
   repo?: string,
   sessionId?: string,
+  service?: string,
 ): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
@@ -92,23 +98,23 @@ export async function logReasoning(
   if (type === "decision") {
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO decisions
-              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?)`,
-      args: [id, repoVal, sessionVal, symbol ?? null, content, now],
+              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service)
+            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?)`,
+      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null],
     });
   } else if (type === "deferred") {
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO deferred_work
-              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', 'open', ?)`,
-      args: [id, repoVal, sessionVal, symbol ?? null, content, now],
+              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, status, created_at, service)
+            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', 'open', ?, ?)`,
+      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null],
     });
   } else {
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO risks
-              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?)`,
-      args: [id, repoVal, sessionVal, symbol ?? null, content, now],
+              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service)
+            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?)`,
+      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null],
     });
   }
 
@@ -176,6 +182,7 @@ export interface PendingRecord {
   table: string;
   type: string; // "decision" | "deferred" | "risk"
   repo: string;
+  service: string | null;
   confidence: string;
   content: string;
   symbol: string | null;
@@ -189,17 +196,28 @@ const TABLE_TO_TYPE: Record<string, string> = {
   personal_records: "personal",
 };
 
-export async function getPendingRecords(repo?: string): Promise<PendingRecord[]> {
-  const repoClause = repo ? "AND repo = ?" : "";
-  const args = repo ? ["extracted", "inferred", repo] : ["extracted", "inferred"];
+export async function getPendingRecords(repo?: string, service?: string): Promise<PendingRecord[]> {
+  const where: string[] = ["confidence IN (?, ?)"];
+  const args: (string | null)[] = ["extracted", "inferred"];
+
+  if (repo) {
+    where.push("repo = ?");
+    args.push(repo);
+  }
+  if (service !== undefined) {
+    where.push("service IS ?");
+    args.push(service ?? null);
+  }
+
+  const clause = `WHERE ${where.join(" AND ")}`;
   const tables = ["decisions", "deferred_work", "risks"] as const;
 
   const results: PendingRecord[] = [];
   for (const table of tables) {
     const res = await sessionsDb.execute({
-      sql: `SELECT id, repo, confidence, content, symbol, created_at
+      sql: `SELECT id, repo, service, confidence, content, symbol, created_at
             FROM ${table}
-            WHERE confidence IN (?, ?) ${repoClause}
+            ${clause}
             ORDER BY created_at DESC`,
       args,
     });
@@ -210,6 +228,7 @@ export async function getPendingRecords(repo?: string): Promise<PendingRecord[]>
         table,
         type: TABLE_TO_TYPE[table] ?? table,
         repo: String(r["repo"]),
+        service: r["service"] != null ? String(r["service"]) : null,
         confidence: String(r["confidence"]),
         content: String(r["content"]),
         symbol: r["symbol"] != null ? String(r["symbol"]) : null,
@@ -248,7 +267,7 @@ export async function getPersonal(
   repo?: string,
 ): Promise<Record<string, unknown>[]> {
   const where: string[] = [];
-  const args: unknown[] = [];
+  const args: (string | null)[] = [];
 
   if (repo) {
     where.push("repo = ?");

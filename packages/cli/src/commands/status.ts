@@ -13,19 +13,20 @@ interface StatusData {
   open_deferred: Array<{ content: string; symbol?: string; status?: string }>;
 }
 
-async function fetchStatus(repo: string, cwd: string): Promise<StatusData> {
+async function fetchStatus(repo: string, cwd: string, service?: string): Promise<StatusData> {
+  const svcParam = service ? `&service=${encodeURIComponent(service)}` : "";
   const [
     contextRes,
     advisorRes,
     recordCountRes,
   ] = await Promise.allSettled([
-    fetch(`${BASE_URL}/api/context/inject?repo=${encodeURIComponent(repo)}`, {
+    fetch(`${BASE_URL}/api/context/inject?repo=${encodeURIComponent(repo)}${svcParam}`, {
       signal: AbortSignal.timeout(3000),
     }),
     fetch(`${BASE_URL}/api/advisor/gaps?repo=${encodeURIComponent(repo)}&cwd=${encodeURIComponent(cwd)}`, {
       signal: AbortSignal.timeout(3000),
     }),
-    fetch(`${BASE_URL}/api/records/counts?repo=${encodeURIComponent(repo)}`, {
+    fetch(`${BASE_URL}/api/records/counts?repo=${encodeURIComponent(repo)}${svcParam}`, {
       signal: AbortSignal.timeout(3000),
     }),
   ]);
@@ -141,13 +142,13 @@ function formatTimeAgo(ts: number): string {
   return `${days}d ago`;
 }
 
-export async function runStatus(opts: { json?: boolean }): Promise<void> {
+export async function runStatus(opts: { json?: boolean; service?: string }): Promise<void> {
   const repo = process.cwd();
   const repoName = repo.split("/").pop() ?? repo;
 
   let data: StatusData;
   try {
-    data = await fetchStatus(repo, repo);
+    data = await fetchStatus(repo, repo, opts.service);
   } catch (err) {
     if (opts.json) {
       console.log(JSON.stringify({ error: String(err) }));

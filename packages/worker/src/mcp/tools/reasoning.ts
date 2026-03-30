@@ -15,9 +15,10 @@ export function registerReasoningTools(server: McpServer): void {
     {
       symbol: z.string().optional().describe("Filter by symbol/function/class name"),
       repo: z.string().optional().describe("Repo path to filter by (defaults to all)"),
+      service: z.string().optional().describe("Service/package name to scope results within a monorepo (e.g. 'api', '@acme/worker', 'packages/auth')"),
     },
-    async ({ symbol, repo }) => {
-      const result = await getReasoningData(symbol, repo);
+    async ({ symbol, repo, service }) => {
+      const result = await getReasoningData(symbol, repo, service);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -35,9 +36,10 @@ export function registerReasoningTools(server: McpServer): void {
       symbol: z.string().optional().describe("Symbol this record is anchored to"),
       repo: z.string().optional().describe("Repo path (defaults to cwd)"),
       session_id: z.string().optional().describe("Session ID to associate this record with"),
+      service: z.string().optional().describe("Service/package name within a monorepo (e.g. 'api', '@acme/worker', 'packages/auth')"),
     },
-    async ({ type, content, symbol, repo, session_id }) => {
-      const id = await logReasoning(type, content, symbol, repo, session_id);
+    async ({ type, content, symbol, repo, session_id, service }) => {
+      const id = await logReasoning(type, content, symbol, repo, session_id, service);
       return {
         content: [
           {
@@ -55,9 +57,10 @@ export function registerReasoningTools(server: McpServer): void {
     "List all unconfirmed (extracted or inferred) records for a repo. Returns decisions, risks, and deferred items that a human has not yet reviewed. Use this to drive the /lore review flow.",
     {
       repo: z.string().optional().describe("Repo path to filter by (defaults to all)"),
+      service: z.string().optional().describe("Service/package name to scope results within a monorepo"),
     },
-    async ({ repo }) => {
-      const records = await getPendingRecords(repo);
+    async ({ repo, service }) => {
+      const records = await getPendingRecords(repo, service);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(records, null, 2) }],
       };

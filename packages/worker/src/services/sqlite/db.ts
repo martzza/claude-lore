@@ -256,6 +256,28 @@ async function runMigrations(): Promise<void> {
       `ALTER TABLE cross_repo_index ADD COLUMN portfolio TEXT NOT NULL DEFAULT 'default'`,
     );
   } catch {}
+
+  // Phase 6: per-service scoping for monorepo support
+  // Nullable — existing rows get service = NULL meaning "whole repo"
+  const serviceTables = ["decisions", "deferred_work", "risks", "observations", "sessions"];
+  for (const table of serviceTables) {
+    try {
+      await sessionsDb.execute(`ALTER TABLE ${table} ADD COLUMN service TEXT`);
+    } catch {} // column already exists — expected on subsequent starts
+  }
+  // Composite indexes for efficient service-scoped queries
+  const serviceIndexes: Array<[string, string, string]> = [
+    ["idx_decisions_repo_service",   "decisions",    "(repo, service)"],
+    ["idx_deferred_repo_service",    "deferred_work","(repo, service)"],
+    ["idx_risks_repo_service",       "risks",        "(repo, service)"],
+    ["idx_observations_session_svc", "observations", "(session_id, service)"],
+    ["idx_sessions_repo_service",    "sessions",     "(repo, service)"],
+  ];
+  for (const [name, table, cols] of serviceIndexes) {
+    try {
+      await sessionsDb.execute(`CREATE INDEX IF NOT EXISTS ${name} ON ${table} ${cols}`);
+    } catch {}
+  }
 }
 
 async function initPersonalSchema(): Promise<void> {

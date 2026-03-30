@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // UserPromptSubmit hook — detects decision/risk/deferral/planning keywords and logs observations
 import { readFileSync } from "fs";
+import { detectService } from "./detect-service.js";
 
 const PORT = process.env.CLAUDE_LORE_PORT ?? "37778";
 
@@ -51,6 +52,7 @@ async function main() {
   const prompt = input.prompt ?? "";
   const sessionId = input.session_id ?? "unknown";
   const repo = input.cwd ?? input.repo_path ?? process.cwd();
+  const service = detectService(repo);
 
   const matchedDecision = DECISION_PATTERNS.some((p) => p.test(prompt));
   const matchedRisk = RISK_PATTERNS.some((p) => p.test(prompt));
@@ -90,6 +92,7 @@ async function main() {
           repo,
           tool_name: obs.tool_name,
           content: obs.content,
+          ...(service ? { service } : {}),
         }),
         signal: AbortSignal.timeout(3000),
       });

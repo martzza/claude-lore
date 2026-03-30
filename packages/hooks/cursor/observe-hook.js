@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // afterFileEdit hook — logs file edits as observations
 import { readFileSync } from "fs";
+import { detectService } from "./detect-service.js";
 
 const PORT = process.env.CLAUDE_LORE_PORT ?? "37778";
 
@@ -12,6 +13,7 @@ async function main() {
 
   const conversationId = input.conversation_id ?? "unknown";
   const repo = input.cwd ?? input.repo_path ?? process.cwd();
+  const service = detectService(repo);
   const filePath = input.file_path ?? input.path ?? "(unknown)";
 
   try {
@@ -23,6 +25,7 @@ async function main() {
         repo,
         tool_name: "Edit",
         content: `Edit ${filePath}`,
+        ...(service ? { service } : {}),
       }),
       signal: AbortSignal.timeout(3000),
     });

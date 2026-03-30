@@ -199,9 +199,10 @@ skillsCmd
 program
   .command("review")
   .description("Review pending extracted records and promote to confirmed")
-  .action(async () => {
+  .option("--service <name>", "Filter records to a specific service/package within a monorepo")
+  .action(async (opts: { service?: string }) => {
     const { runReview } = await import("./commands/review.js");
-    await runReview();
+    await runReview(opts);
   });
 
 // claude-lore auth
@@ -395,7 +396,8 @@ program
   .command("status")
   .description("Current repo state at a glance")
   .option("--json", "Output as JSON")
-  .action(async (opts: { json?: boolean }) => {
+  .option("--service <name>", "Scope status to a specific service/package within a monorepo")
+  .action(async (opts: { json?: boolean; service?: string }) => {
     const { runStatus } = await import("./commands/status.js");
     await runStatus(opts);
   });

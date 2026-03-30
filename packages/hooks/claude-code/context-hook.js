@@ -3,6 +3,7 @@
 import { readFileSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { detectService } from "./detect-service.js";
 
 const PORT = process.env.CLAUDE_LORE_PORT ?? "37778";
 const NUDGE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -15,13 +16,14 @@ async function main() {
 
   const repo = input.cwd ?? input.repo_path ?? process.cwd();
   const sessionId = input.session_id ?? "unknown";
+  const service = detectService(repo);
 
   // Init the session
   try {
     await fetch(`http://127.0.0.1:${PORT}/api/sessions/init`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, repo }),
+      body: JSON.stringify({ session_id: sessionId, repo, ...(service ? { service } : {}) }),
       signal: AbortSignal.timeout(3000),
     });
   } catch {}
@@ -53,8 +55,10 @@ async function main() {
 
   // Fetch context to inject
   try {
+    const params = new URLSearchParams({ repo });
+    if (service) params.set("service", service);
     const res = await fetch(
-      `http://127.0.0.1:${PORT}/api/context/inject?repo=${encodeURIComponent(repo)}`,
+      `http://127.0.0.1:${PORT}/api/context/inject?${params}`,
       { signal: AbortSignal.timeout(3000) },
     );
     if (res.ok) {
