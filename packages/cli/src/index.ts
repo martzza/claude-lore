@@ -41,9 +41,21 @@ graphCmd
   .option("--format <fmt>", "Output format: mermaid|dot|html|json", "mermaid")
   .option("--open", "Write HTML to /tmp and open in browser")
   .option("--repo <path>", "Repo path (defaults to cwd)")
-  .action(async (opts: { format?: string; open?: boolean; repo?: string }) => {
+  .option("--service <name>", "Scope graph to a specific service/package within a monorepo")
+  .action(async (opts: { format?: string; open?: boolean; repo?: string; service?: string }) => {
     const { graphDecisions } = await import("./commands/graph.js");
     await graphDecisions(opts);
+  });
+
+graphCmd
+  .command("services")
+  .description("Intra-repo service dependency graph (monorepo coupling map)")
+  .option("--format <fmt>", "Output format: mermaid|dot|json", "mermaid")
+  .option("--open", "Write HTML to /tmp and open in browser")
+  .option("--repo <path>", "Repo path (defaults to cwd)")
+  .action(async (opts: { format?: string; open?: boolean; repo?: string }) => {
+    const { graphServices } = await import("./commands/graph.js");
+    await graphServices(opts);
   });
 
 graphCmd
