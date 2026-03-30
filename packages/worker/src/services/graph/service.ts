@@ -396,7 +396,9 @@ export async function buildPortfolioGraph(repos?: string[]): Promise<GraphData> 
     let manifest: Record<string, unknown[]> = {};
     try {
       manifest = JSON.parse(String(row["manifest"])) as Record<string, unknown[]>;
-    } catch {}
+    } catch (err) {
+      console.warn(`[graph] Failed to parse manifest for repo ${repoPath}:`, String(err));
+    }
 
     const symbolCount = [
       ...((manifest["exported_decisions"] ?? []) as Row[]),

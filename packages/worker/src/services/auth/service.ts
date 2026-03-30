@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -42,7 +42,14 @@ export function generateToken(author: string, scopes: Scope[]): string {
 
 export function validateToken(token: string): TokenRecord | null {
   const config = readConfig();
-  return config.tokens.find((t) => t.token === token) ?? null;
+  const incoming = Buffer.from(token);
+  for (const t of config.tokens) {
+    const stored = Buffer.from(t.token);
+    if (stored.length === incoming.length && timingSafeEqual(stored, incoming)) {
+      return t;
+    }
+  }
+  return null;
 }
 
 export function listTokens(): Array<{ masked: string; author: string; scopes: Scope[]; created_at: number }> {
