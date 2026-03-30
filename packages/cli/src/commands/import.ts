@@ -2,7 +2,8 @@
 interface DiscoveredFile {
   path: string;
   relativePath: string;
-  classes: string[];
+  classes?: string[];
+  kind?: string;
   size: number;
 }
 
@@ -156,5 +157,61 @@ export async function runImportCommand(opts: {
   }
 
   console.log(`\n${result.written} record${result.written !== 1 ? "s" : ""} written with confidence: inferred`);
+  console.log("Run: claude-lore review   to confirm or discard");
+}
+
+export async function runImportCursorRules(opts: {
+  dryRun?: boolean;
+  service?: string;
+}): Promise<void> {
+  const repo = process.cwd();
+
+  await assertWorkerRunning();
+
+  process.stdout.write(`\n⟳ Scanning ${repo} for cursor rules (.cursor/rules, .cursor/personas, .cursorrules)...\n`);
+
+  const res = await fetch(`${BASE_URL}/api/bootstrap/import-cursor-rules`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo, dryRun: opts.dryRun ?? false, service: opts.service }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error("Import failed:", err);
+    process.exit(1);
+  }
+
+  const data = (await res.json()) as { result: ImportRunResult };
+  const result = data.result;
+
+  if (result.discovered.length === 0) {
+    console.log("  No cursor rule files found.");
+    console.log("  Expected: .cursor/rules/*.md, .cursor/personas/*.md, or .cursorrules");
+    return;
+  }
+
+  // Print discovered files grouped by kind
+  console.log(`\nFound ${result.discovered.length} cursor rule file${result.discovered.length !== 1 ? "s" : ""}:`);
+  for (const f of result.discovered) {
+    const kind = f.kind ?? "rule";
+    console.log(`  [${kind.padEnd(12)}] ${f.relativePath}`);
+  }
+
+  printExtracted(result);
+
+  if (result.records.length === 0) return;
+
+  if (opts.dryRun) {
+    printDryRunRecords(result.records);
+    console.log("\nDry run complete — nothing written.");
+    return;
+  }
+
+  const svcNote = opts.service ? ` (service: ${opts.service})` : "";
+  console.log(`\n${result.written} record${result.written !== 1 ? "s" : ""} written with confidence: inferred${svcNote}`);
+  if (result.skipped > 0) {
+    console.log(`${result.skipped} duplicate${result.skipped !== 1 ? "s" : ""} skipped`);
+  }
   console.log("Run: claude-lore review   to confirm or discard");
 }

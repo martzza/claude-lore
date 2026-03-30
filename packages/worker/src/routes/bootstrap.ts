@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { runBootstrap, deduplicateBootstrapRecords } from "../services/bootstrap/bootstrap.js";
 import { runImport } from "../services/bootstrap/importer.js";
+import { runCursorRulesImport } from "../services/bootstrap/cursor-rules-importer.js";
 import { listTemplates } from "../services/bootstrap/registry.js";
 import { requireScope } from "../middleware/auth.js";
 
@@ -44,6 +45,27 @@ router.post("/import", requireScope("write:sessions"), async (req, res) => {
   }
   try {
     const result = await runImport(parsed.data);
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(400).json({ error: String(err) });
+  }
+});
+
+// POST /api/bootstrap/import-cursor-rules — import .cursor/rules, .cursor/personas, .cursorrules
+const ImportCursorRulesBody = z.object({
+  repo: z.string(),
+  dryRun: z.boolean().optional().default(false),
+  service: z.string().optional(),
+});
+
+router.post("/import-cursor-rules", requireScope("write:sessions"), async (req, res) => {
+  const parsed = ImportCursorRulesBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const result = await runCursorRulesImport(parsed.data);
     res.json({ ok: true, result });
   } catch (err) {
     res.status(400).json({ error: String(err) });
