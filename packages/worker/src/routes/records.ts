@@ -37,7 +37,7 @@ router.post("/confirm", requireScope("write:decisions"), async (req, res) => {
 });
 
 // POST /api/records/discard — delete a record by id+table or all records by repo+source
-router.post("/discard", async (req, res) => {
+router.post("/discard", requireScope("write:decisions"), async (req, res) => {
   // Try { repo, source } first
   const bySource = DiscardBySourceBody.safeParse(req.body);
   if (bySource.success) {
@@ -67,7 +67,7 @@ router.post("/discard", async (req, res) => {
 });
 
 // POST /api/records/edit — update content of a record (auto-stays at current confidence)
-router.post("/edit", async (req, res) => {
+router.post("/edit", requireScope("write:decisions"), async (req, res) => {
   const parsed = RecordRefBody.extend({ content: z.string().min(1) }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
