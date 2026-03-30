@@ -112,21 +112,25 @@ type Row = Record<string, unknown>;
 
 // ─── buildDecisionHierarchy ───────────────────────────────────────────────────
 
-export async function buildDecisionHierarchy(repo: string): Promise<GraphData> {
+export async function buildDecisionHierarchy(repo: string, service?: string): Promise<GraphData> {
+  const svcClause = service !== undefined ? "AND service IS ?" : "";
+  const baseArgs = (extra: unknown[] = []): (string | null)[] =>
+    service !== undefined ? [repo, service ?? null, ...extra as (string | null)[]] : [repo, ...extra as (string | null)[]];
+
   const [decRes, riskRes, defRes] = await Promise.all([
     sessionsDb.execute({
       sql: `SELECT id, symbol, content, rationale, confidence, anchor_status, adr_status
-            FROM decisions WHERE repo = ?`,
-      args: [repo],
+            FROM decisions WHERE repo = ? ${svcClause}`,
+      args: baseArgs(),
     }),
     sessionsDb.execute({
-      sql: `SELECT id, symbol, content, confidence, anchor_status FROM risks WHERE repo = ?`,
-      args: [repo],
+      sql: `SELECT id, symbol, content, confidence, anchor_status FROM risks WHERE repo = ? ${svcClause}`,
+      args: baseArgs(),
     }),
     sessionsDb.execute({
       sql: `SELECT id, symbol, content, confidence, anchor_status, blocked_by
-            FROM deferred_work WHERE repo = ? AND status = 'open'`,
-      args: [repo],
+            FROM deferred_work WHERE repo = ? ${svcClause} AND status = 'open'`,
+      args: baseArgs(),
     }),
   ]);
 
@@ -256,8 +260,11 @@ export async function buildDecisionHierarchy(repo: string): Promise<GraphData> {
 
   const dedupedEdges = dedupeEdges(edges);
 
+  const repoLabel = repo.split("/").pop() ?? repo;
+  const title = service ? `Decision hierarchy — ${repoLabel} / ${service}` : `Decision hierarchy — ${repoLabel}`;
+
   return {
-    title: `Decision hierarchy — ${repo.split("/").pop() ?? repo}`,
+    title,
     nodes,
     edges: dedupedEdges,
     meta: { repo, generated: Date.now(), node_count: nodes.length, edge_count: dedupedEdges.length },
@@ -464,6 +471,189 @@ export async function buildPortfolioGraph(repos?: string[]): Promise<GraphData> 
     edges,
     meta: {
       repo: repos?.join(", ") ?? "all",
+      generated: Date.now(),
+      node_count: nodes.length,
+      edge_count: edges.length,
+    },
+  };
+}
+
+// ─── buildServiceGraph ────────────────────────────────────────────────────────
+//
+// Intra-repo service dependency graph. Nodes are services (packages) within a
+// single monorepo. Edges are drawn when two services share a symbol anchor OR
+// when a record in one service mentions another service's name in its content.
+//
+// This gives agents a map of which services are coupled so they can reason about
+// blast radius within the monorepo before making cross-service changes.
+
+export interface ServiceGraphMeta {
+  repo: string;
+  services_found: number;
+  generated: number;
+  node_count: number;
+  edge_count: number;
+}
+
+export interface ServiceGraphData extends Omit<GraphData, "meta"> {
+  meta: ServiceGraphMeta;
+}
+
+export async function buildServiceGraph(repo: string): Promise<ServiceGraphData> {
+  // Step 1: load all records that have a service label in this repo
+  const [decRes, riskRes, defRes] = await Promise.all([
+    sessionsDb.execute({
+      sql: `SELECT service, symbol, content FROM decisions
+            WHERE repo = ? AND service IS NOT NULL`,
+      args: [repo],
+    }),
+    sessionsDb.execute({
+      sql: `SELECT service, symbol, content FROM risks
+            WHERE repo = ? AND service IS NOT NULL`,
+      args: [repo],
+    }),
+    sessionsDb.execute({
+      sql: `SELECT service, symbol, content FROM deferred_work
+            WHERE repo = ? AND service IS NOT NULL AND status = 'open'`,
+      args: [repo],
+    }),
+  ]);
+
+  type ServiceRow = { service: string; symbol: string | null; content: string };
+  const allRows: ServiceRow[] = [
+    ...(decRes.rows as Row[]).map((r) => ({
+      service: String(r["service"]),
+      symbol: r["symbol"] != null ? String(r["symbol"]) : null,
+      content: String(r["content"] ?? ""),
+    })),
+    ...(riskRes.rows as Row[]).map((r) => ({
+      service: String(r["service"]),
+      symbol: r["symbol"] != null ? String(r["symbol"]) : null,
+      content: String(r["content"] ?? ""),
+    })),
+    ...(defRes.rows as Row[]).map((r) => ({
+      service: String(r["service"]),
+      symbol: r["symbol"] != null ? String(r["symbol"]) : null,
+      content: String(r["content"] ?? ""),
+    })),
+  ];
+
+  if (allRows.length === 0) {
+    return {
+      title: `Service dependency graph — ${repo.split("/").pop() ?? repo}`,
+      nodes: [],
+      edges: [],
+      meta: { repo, services_found: 0, generated: Date.now(), node_count: 0, edge_count: 0 },
+    };
+  }
+
+  // Step 2: collect per-service stats
+  const serviceStats = new Map<string, { decisions: number; risks: number; deferred: number }>();
+  for (const r of decRes.rows as Row[]) {
+    const svc = String(r["service"]);
+    const s = serviceStats.get(svc) ?? { decisions: 0, risks: 0, deferred: 0 };
+    s.decisions++;
+    serviceStats.set(svc, s);
+  }
+  for (const r of riskRes.rows as Row[]) {
+    const svc = String(r["service"]);
+    const s = serviceStats.get(svc) ?? { decisions: 0, risks: 0, deferred: 0 };
+    s.risks++;
+    serviceStats.set(svc, s);
+  }
+  for (const r of defRes.rows as Row[]) {
+    const svc = String(r["service"]);
+    const s = serviceStats.get(svc) ?? { decisions: 0, risks: 0, deferred: 0 };
+    s.deferred++;
+    serviceStats.set(svc, s);
+  }
+
+  const services = Array.from(serviceStats.keys());
+
+  // Step 3: build nodes — one per service
+  const nodes: GraphNode[] = services.map((svc) => {
+    const stats = serviceStats.get(svc)!;
+    const total = stats.decisions + stats.risks + stats.deferred;
+    return {
+      id: `svc:${svc}`,
+      label: svc,
+      type: "repo" as const, // re-use "repo" type for rendering purposes
+      metadata: {
+        service: svc,
+        decisions: stats.decisions,
+        risks: stats.risks,
+        deferred: stats.deferred,
+        total_records: total,
+      },
+      weight: Math.min(10, Math.max(1, total)),
+      status: "healthy" as const,
+    };
+  });
+
+  // Step 4: build edges
+  // 4a. Shared symbols — two services that both have records anchored to the same symbol
+  const symbolToServices = new Map<string, Set<string>>();
+  for (const row of allRows) {
+    if (!row.symbol) continue;
+    if (!symbolToServices.has(row.symbol)) symbolToServices.set(row.symbol, new Set());
+    symbolToServices.get(row.symbol)!.add(row.service);
+  }
+
+  const edgeWeights = new Map<string, { weight: number; labels: string[] }>();
+  const addEdge = (a: string, b: string, label: string, w: number) => {
+    const key = [a, b].sort().join("|||");
+    const existing = edgeWeights.get(key) ?? { weight: 0, labels: [] };
+    existing.weight += w;
+    if (!existing.labels.includes(label)) existing.labels.push(label);
+    edgeWeights.set(key, existing);
+  };
+
+  for (const [sym, svcs] of symbolToServices) {
+    const svcList = Array.from(svcs);
+    for (let i = 0; i < svcList.length; i++) {
+      for (let j = i + 1; j < svcList.length; j++) {
+        addEdge(svcList[i]!, svcList[j]!, sym, 3);
+      }
+    }
+  }
+
+  // 4b. Content mentions — service A's record content mentions service B's name
+  for (const row of allRows) {
+    const content = row.content.toLowerCase();
+    for (const otherSvc of services) {
+      if (otherSvc === row.service) continue;
+      // Match on the short service name (last path segment, without scope prefix)
+      const shortName = otherSvc.replace(/^@[^/]+\//, "").split("/").pop()!.toLowerCase();
+      if (shortName.length < 3) continue; // skip very short names that cause false positives
+      if (content.includes(shortName)) {
+        addEdge(row.service, otherSvc, `mentions ${shortName}`, 1);
+      }
+    }
+  }
+
+  const edges: GraphEdge[] = [];
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  for (const [key, { weight, labels }] of edgeWeights) {
+    const [a, b] = key.split("|||") as [string, string];
+    const fromId = `svc:${a}`;
+    const toId = `svc:${b}`;
+    if (!nodeIds.has(fromId) || !nodeIds.has(toId)) continue;
+    edges.push({
+      from: fromId,
+      to: toId,
+      label: labels.slice(0, 3).join(", "),
+      type: "imports" as const,
+      weight: Math.min(10, weight),
+    });
+  }
+
+  return {
+    title: `Service dependency graph — ${repo.split("/").pop() ?? repo}`,
+    nodes,
+    edges,
+    meta: {
+      repo,
+      services_found: services.length,
       generated: Date.now(),
       node_count: nodes.length,
       edge_count: edges.length,

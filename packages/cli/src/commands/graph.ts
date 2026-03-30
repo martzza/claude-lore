@@ -65,6 +65,29 @@ export async function graphDecisions(opts: {
   format?: string;
   open?: boolean;
   repo?: string;
+  service?: string;
+}): Promise<void> {
+  await assertWorkerRunning();
+
+  const repo = opts.repo ?? process.cwd();
+  const format = opts.open ? "html" : (opts.format ?? "mermaid");
+  const params: Record<string, string> = { repo, format };
+  if (opts.service) params["service"] = opts.service;
+
+  try {
+    const content = await fetchGraph("decisions", params);
+    const label = opts.service ? `Decision hierarchy — ${opts.service}` : "Decision hierarchy";
+    await handleOutput(content, format, opts.open ?? false, label);
+  } catch (err) {
+    console.error(`Error: ${String(err)}`);
+    process.exit(1);
+  }
+}
+
+export async function graphServices(opts: {
+  format?: string;
+  open?: boolean;
+  repo?: string;
 }): Promise<void> {
   await assertWorkerRunning();
 
@@ -72,8 +95,8 @@ export async function graphDecisions(opts: {
   const format = opts.open ? "html" : (opts.format ?? "mermaid");
 
   try {
-    const content = await fetchGraph("decisions", { repo, format });
-    await handleOutput(content, format, opts.open ?? false, "Decision hierarchy");
+    const content = await fetchGraph("services", { repo, format });
+    await handleOutput(content, format, opts.open ?? false, "Service dependency graph");
   } catch (err) {
     console.error(`Error: ${String(err)}`);
     process.exit(1);

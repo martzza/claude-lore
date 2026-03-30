@@ -3,6 +3,7 @@ import {
   buildDecisionHierarchy,
   buildSymbolImpactGraph,
   buildPortfolioGraph,
+  buildServiceGraph,
 } from "../services/graph/service.js";
 import { toMermaid } from "../services/graph/renderers/mermaid.js";
 import { toDot } from "../services/graph/renderers/dot.js";
@@ -36,13 +37,27 @@ function send(res: import("express").Response, format: Format, data: unknown): v
   }
 }
 
-// GET /api/graph/decisions?repo=&format=mermaid|dot|html|json
+// GET /api/graph/decisions?repo=&format=mermaid|dot|html|json&service=
 router.get("/decisions", async (req, res) => {
+  const repo =
+    typeof req.query["repo"] === "string" ? req.query["repo"] : process.cwd();
+  const service = typeof req.query["service"] === "string" ? req.query["service"] : undefined;
+  const format = parseFormat(req.query["format"]);
+  try {
+    const graph = await buildDecisionHierarchy(repo, service);
+    send(res, format, graph);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// GET /api/graph/services?repo=&format=mermaid|dot|json
+router.get("/services", async (req, res) => {
   const repo =
     typeof req.query["repo"] === "string" ? req.query["repo"] : process.cwd();
   const format = parseFormat(req.query["format"]);
   try {
-    const graph = await buildDecisionHierarchy(repo);
+    const graph = await buildServiceGraph(repo);
     send(res, format, graph);
   } catch (err) {
     res.status(500).json({ error: String(err) });
