@@ -1,5 +1,6 @@
 import express from "express";
-import { initDb, getTursoStatus } from "./services/sqlite/db.js";
+import { initDb, getTursoStatus, hasTurso } from "./services/sqlite/db.js";
+import { runSync } from "./services/sync/service.js";
 import { authMiddleware } from "./middleware/auth.js";
 import authRouter from "./routes/auth.js";
 import sessionsRouter from "./routes/sessions.js";
@@ -16,6 +17,7 @@ import portfolioRouter from "./routes/portfolio.js";
 import graphRouter from "./routes/graph.js";
 import annotationRouter from "./routes/annotation.js";
 import reviewRouter from "./routes/review.js";
+import syncRouter from "./routes/sync.js";
 
 const PORT = parseInt(process.env["CLAUDE_LORE_PORT"] ?? "37778", 10);
 
@@ -54,9 +56,19 @@ async function main(): Promise<void> {
   app.use("/api/graph", graphRouter);
   app.use("/api/annotation", annotationRouter);
   app.use("/api/review", reviewRouter);
+  app.use("/api/sync", syncRouter);
 
   app.listen(PORT, "127.0.0.1", () => {
     console.log(`claude-lore worker listening on http://127.0.0.1:${PORT}`);
+
+    // Periodic sync every 5 minutes when Turso is configured
+    if (hasTurso()) {
+      const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+      setInterval(() => {
+        runSync().catch((err) => console.error("[sync] periodic sync error:", err));
+      }, SYNC_INTERVAL_MS);
+      console.log("[sync] Turso connected — periodic sync every 5 minutes");
+    }
   });
 }
 

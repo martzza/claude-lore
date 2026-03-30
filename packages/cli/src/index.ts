@@ -151,6 +151,35 @@ program
     await runImportCursorRules(opts);
   });
 
+// claude-lore sync
+const syncCmd = program.command("sync").description("Turso team sync — status, trigger, and conflict resolution");
+
+syncCmd
+  .command("status")
+  .description("Show last sync result and unresolved conflicts")
+  .action(async () => {
+    const { runSyncStatus } = await import("./commands/sync.js");
+    await runSyncStatus();
+  });
+
+syncCmd
+  .command("now")
+  .description("Trigger an immediate sync with Turso")
+  .action(async () => {
+    const { runSyncNow } = await import("./commands/sync.js");
+    await runSyncNow();
+  });
+
+syncCmd
+  .command("conflicts")
+  .description("List or resolve sync conflicts")
+  .option("--repo <path>", "Filter by repo path")
+  .option("--resolve <id>", "Mark a conflict as resolved by ID")
+  .action(async (opts: { repo?: string; resolve?: string }) => {
+    const { runSyncConflicts } = await import("./commands/sync.js");
+    await runSyncConflicts(opts);
+  });
+
 // claude-lore worker
 const workerCmd = program.command("worker").description("Manage the claude-lore background worker");
 

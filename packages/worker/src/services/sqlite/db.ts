@@ -16,6 +16,10 @@ export function getTursoStatus(): { connected: boolean; syncUrl: string | null }
   return { connected: !!tursoSyncUrl, syncUrl: tursoSyncUrl };
 }
 
+export function hasTurso(): boolean {
+  return !!tursoSyncUrl;
+}
+
 export async function syncNow(): Promise<void> {
   if (!tursoSyncUrl) return;
   try {
@@ -255,6 +259,49 @@ async function runMigrations(): Promise<void> {
     await registryDb.execute(
       `ALTER TABLE cross_repo_index ADD COLUMN portfolio TEXT NOT NULL DEFAULT 'default'`,
     );
+  } catch {}
+
+  // Phase 7: per-developer attribution + sync infrastructure
+  const attributionTables = ["decisions", "deferred_work", "risks"];
+  for (const table of attributionTables) {
+    try {
+      await sessionsDb.execute(`ALTER TABLE ${table} ADD COLUMN created_by TEXT`);
+    } catch {} // column already exists
+  }
+
+  // sync_log — one row per sync attempt
+  try {
+    await sessionsDb.execute(`
+      CREATE TABLE IF NOT EXISTS sync_log (
+        id TEXT PRIMARY KEY,
+        synced_at INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        sessions_changed INTEGER NOT NULL DEFAULT 0,
+        registry_changed INTEGER NOT NULL DEFAULT 0,
+        error TEXT
+      )
+    `);
+  } catch {}
+
+  // sync_conflicts — records where remote overwrote a local confirmed record
+  // or a remote confirmation appeared for a record we hadn't seen
+  try {
+    await sessionsDb.execute(`
+      CREATE TABLE IF NOT EXISTS sync_conflicts (
+        id TEXT PRIMARY KEY,
+        detected_at INTEGER NOT NULL,
+        repo TEXT NOT NULL,
+        table_name TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        conflict_type TEXT NOT NULL,
+        local_content TEXT,
+        remote_content TEXT,
+        local_confirmed_by TEXT,
+        remote_confirmed_by TEXT,
+        resolved INTEGER NOT NULL DEFAULT 0
+      )
+    `);
   } catch {}
 
   // Phase 6: per-service scoping for monorepo support

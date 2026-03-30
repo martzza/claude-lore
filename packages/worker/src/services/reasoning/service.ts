@@ -1,6 +1,6 @@
 import { sessionsDb, personalDb } from "../sqlite/db.js";
 import { randomUUID } from "crypto";
-import { execSync } from "child_process";
+import { getGitEmail } from "../sync/service.js";
 
 // ---------------------------------------------------------------------------
 // Confidence presentation
@@ -94,27 +94,28 @@ export async function logReasoning(
   const now = Date.now();
   const repoVal = repo ?? process.cwd();
   const sessionVal = sessionId ?? null;
+  const createdBy = getGitEmail();
 
   if (type === "decision") {
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO decisions
-              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service)
-            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?)`,
-      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null],
+              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service, created_by)
+            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?)`,
+      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null, createdBy],
     });
   } else if (type === "deferred") {
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO deferred_work
-              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, status, created_at, service)
-            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', 'open', ?, ?)`,
-      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null],
+              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, status, created_at, service, created_by)
+            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', 'open', ?, ?, ?)`,
+      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null, createdBy],
     });
   } else {
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO risks
-              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service)
-            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?)`,
-      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null],
+              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service, created_by)
+            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?)`,
+      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null, createdBy],
     });
   }
 
@@ -127,14 +128,6 @@ export async function logReasoning(
 
 const SESSIONS_DB_TABLES = new Set(["decisions", "deferred_work", "risks"]);
 const PERSONAL_DB_TABLES = new Set(["personal_records"]);
-
-function getGitEmail(): string {
-  try {
-    return execSync("git config user.email", { encoding: "utf8" }).trim();
-  } catch {
-    return "unknown";
-  }
-}
 
 export async function confirmRecord(id: string, table: string): Promise<void> {
   const email = getGitEmail();
