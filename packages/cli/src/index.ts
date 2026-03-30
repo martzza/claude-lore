@@ -140,6 +140,17 @@ program
     await runImportCommand(opts);
   });
 
+// claude-lore import-cursor-rules
+program
+  .command("import-cursor-rules")
+  .description("Import team rules from .cursor/rules/, .cursor/personas/, and .cursorrules into the knowledge graph")
+  .option("--dry-run", "Preview records without writing")
+  .option("--service <name>", "Tag imported records with a service/package name")
+  .action(async (opts: { dryRun?: boolean; service?: string }) => {
+    const { runImportCursorRules } = await import("./commands/import.js");
+    await runImportCursorRules(opts);
+  });
+
 // claude-lore worker
 const workerCmd = program.command("worker").description("Manage the claude-lore background worker");
 
