@@ -6,8 +6,17 @@ import type { LoreTemplate } from "./types.js";
 // Built-in templates — resolved relative to this file
 import sampleTemplate from "./templates/sample/index.js";
 import owaspTemplate from "./templates/owasp-top10/index.js";
+import monorepoServicesTemplate from "./templates/monorepo-services/index.js";
+import cursorRulesTemplate from "./templates/cursor-rules/index.js";
+import securityChecklistTemplate from "./templates/security-checklist/index.js";
 
-const BUILT_INS: LoreTemplate[] = [sampleTemplate, owaspTemplate];
+const BUILT_INS: LoreTemplate[] = [
+  sampleTemplate,
+  owaspTemplate,
+  monorepoServicesTemplate,
+  cursorRulesTemplate,
+  securityChecklistTemplate,
+];
 
 const MAX_TEMPLATE_DIRS = 100;
 
