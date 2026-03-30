@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { readdirSync, readFileSync, existsSync, statSync } from "fs";
+import { readdirSync, readFileSync, existsSync, statSync, realpathSync } from "fs";
 import { join, basename, extname, relative } from "path";
 import { sessionsDb } from "../sqlite/db.js";
 
@@ -93,6 +93,16 @@ function isRiskContent(text: string): boolean {
 
 // ─── File discovery ─────────────────────────────────────────────────────────────
 
+function isWithinRepo(repo: string, filePath: string): boolean {
+  try {
+    const real = realpathSync(filePath);
+    const repoReal = realpathSync(repo);
+    return real.startsWith(repoReal + "/") || real === repoReal;
+  } catch {
+    return false; // if realpathSync fails (e.g. broken symlink), exclude
+  }
+}
+
 function discoverRuleFiles(repo: string): CursorRuleFile[] {
   const files: CursorRuleFile[] = [];
 
@@ -104,6 +114,7 @@ function discoverRuleFiles(repo: string): CursorRuleFile[] {
     for (const entry of entries) {
       if (!RULE_EXTENSIONS.has(extname(entry))) continue;
       const full = join(rulesDir, entry);
+      if (!isWithinRepo(repo, full)) continue; // guard against symlinks escaping repo
       let size = 0;
       try { size = statSync(full).size; } catch { continue; }
       if (size > MAX_FILE_SIZE) continue;
@@ -124,6 +135,7 @@ function discoverRuleFiles(repo: string): CursorRuleFile[] {
     for (const entry of entries) {
       if (!RULE_EXTENSIONS.has(extname(entry))) continue;
       const full = join(personasDir, entry);
+      if (!isWithinRepo(repo, full)) continue; // guard against symlinks escaping repo
       let size = 0;
       try { size = statSync(full).size; } catch { continue; }
       if (size > MAX_FILE_SIZE) continue;

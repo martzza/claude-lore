@@ -63,8 +63,13 @@ export function listTokens(): Array<{ masked: string; author: string; scopes: Sc
 
 export function revokeToken(token: string): boolean {
   const config = readConfig();
+  const incoming = Buffer.from(token);
   const before = config.tokens.length;
-  config.tokens = config.tokens.filter((t) => t.token !== token);
+  config.tokens = config.tokens.filter((t) => {
+    const stored = Buffer.from(t.token);
+    if (stored.length !== incoming.length) return true; // keep — different token
+    return !timingSafeEqual(stored, incoming);
+  });
   if (config.tokens.length < before) {
     writeConfig(config);
     return true;

@@ -14,22 +14,22 @@ import { requireScope } from "../middleware/auth.js";
 const router = Router();
 
 const InitBody = z.object({
-  session_id: z.string(),
-  repo: z.string(),
+  session_id: z.string().min(1),
+  repo: z.string().min(1),
   service: z.string().nullable().optional(),
 });
 
 const ObservationBody = z.object({
-  session_id: z.string(),
-  repo: z.string(),
+  session_id: z.string().min(1),
+  repo: z.string().min(1),
   tool_name: z.string().optional().default("unknown"),
-  content: z.string(),
+  content: z.string().min(1),
   service: z.string().nullable().optional(),
 });
 
 const SessionRefBody = z.object({
-  session_id: z.string(),
-  repo: z.string(),
+  session_id: z.string().min(1),
+  repo: z.string().min(1),
   service: z.string().nullable().optional(),
 });
 
