@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // PostToolUse hook — logs Write/Edit/Bash observations to the worker
 import { readFileSync } from "fs";
+import { detectService } from "./detect-service.js";
 
 const PORT = process.env.CLAUDE_LORE_PORT ?? "37778";
 
@@ -18,6 +19,7 @@ async function main() {
 
   const sessionId = input.session_id ?? "unknown";
   const repo = input.cwd ?? input.repo_path ?? process.cwd();
+  const service = detectService(repo);
 
   // Build a compact content summary from tool input
   let content = "";
@@ -34,7 +36,7 @@ async function main() {
     await fetch(`http://127.0.0.1:${PORT}/api/sessions/observations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, repo, tool_name: toolName, content }),
+      body: JSON.stringify({ session_id: sessionId, repo, tool_name: toolName, content, ...(service ? { service } : {}) }),
       signal: AbortSignal.timeout(3000),
     });
   } catch {}

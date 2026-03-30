@@ -16,6 +16,7 @@ const router = Router();
 const InitBody = z.object({
   session_id: z.string(),
   repo: z.string(),
+  service: z.string().nullable().optional(),
 });
 
 const ObservationBody = z.object({
@@ -23,11 +24,13 @@ const ObservationBody = z.object({
   repo: z.string(),
   tool_name: z.string().optional().default("unknown"),
   content: z.string(),
+  service: z.string().nullable().optional(),
 });
 
 const SessionRefBody = z.object({
   session_id: z.string(),
   repo: z.string(),
+  service: z.string().nullable().optional(),
 });
 
 // POST /api/sessions/init — called by SessionStart hook
@@ -37,8 +40,8 @@ router.post("/init", requireScope("write:sessions"), async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const { session_id, repo } = parsed.data;
-  await initSession(session_id, repo);
+  const { session_id, repo, service } = parsed.data;
+  await initSession(session_id, repo, service ?? undefined);
   res.json({ ok: true });
 });
 
@@ -49,13 +52,13 @@ router.post("/observations", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const { session_id, repo, tool_name, content } = parsed.data;
-  await logObservation(session_id, repo, tool_name, content);
+  const { session_id, repo, tool_name, content, service } = parsed.data;
+  await logObservation(session_id, repo, tool_name, content, service ?? undefined);
   res.json({ ok: true });
 
   // Pre-warm advisor cache when a planning signal is detected
   if (tool_name === "planning-signal") {
-    warmAdvisorCache(repo, repo);
+    warmAdvisorCache(repo, repo, service ?? undefined);
   }
 });
 
@@ -66,10 +69,10 @@ router.post("/summarise", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const { session_id, repo } = parsed.data;
+  const { session_id, repo, service } = parsed.data;
   // Respond immediately, run compression async
   res.json({ ok: true, queued: true });
-  runCompressionPass(session_id, repo).catch((err) =>
+  runCompressionPass(session_id, repo, service ?? undefined).catch((err) =>
     console.error("[compression] error:", err),
   );
 });

@@ -25,18 +25,21 @@ interface PendingRecord {
   table: string;
   type: string;
   repo: string;
+  service: string | null;
   confidence: string;
   content: string;
   symbol: string | null;
   created_at: number;
 }
 
-export async function runReview(): Promise<void> {
+export async function runReview(opts: { service?: string } = {}): Promise<void> {
   await assertWorkerRunning();
 
   const repo = process.cwd();
+  const params = new URLSearchParams({ repo });
+  if (opts.service) params.set("service", opts.service);
   const res = await fetch(
-    `${BASE_URL}/api/records/pending?repo=${encodeURIComponent(repo)}`,
+    `${BASE_URL}/api/records/pending?${params}`,
     { signal: AbortSignal.timeout(5000) },
   );
 

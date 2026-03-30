@@ -13,17 +13,18 @@ const absolutePath = z.string().refine(
 const InjectQuery = z.object({
   repo: z.string(),
   cwd: absolutePath.optional(),
+  service: z.string().optional(),
 });
 
-// GET /api/context/inject?repo=<path>&cwd=<abs> — called by SessionStart hook
+// GET /api/context/inject?repo=<path>&cwd=<abs>&service=<name> — called by SessionStart hook
 router.get("/inject", async (req, res) => {
   const parsed = InjectQuery.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const { repo, cwd } = parsed.data;
-  const context = await buildContextString(repo, cwd);
+  const { repo, cwd, service } = parsed.data;
+  const context = await buildContextString(repo, cwd, service);
   res.json({ context });
 });
 

@@ -85,16 +85,18 @@ async function computeAdvisorLines(repo: string, cwd: string): Promise<string[]>
   return lines;
 }
 
-export function warmAdvisorCache(repo: string, cwd: string): void {
+export function warmAdvisorCache(repo: string, cwd: string, service?: string): void {
+  const cacheKey = `${repo}::${service ?? ""}`;
   computeAdvisorLines(repo, cwd)
     .then((lines) => {
-      advisorCache.set(repo, { lines, expires: Date.now() + ADVISOR_CACHE_TTL });
+      advisorCache.set(cacheKey, { lines, expires: Date.now() + ADVISOR_CACHE_TTL });
     })
     .catch(() => {});
 }
 
-async function getAdvisorLines(repo: string, cwd: string): Promise<string[]> {
-  const cached = advisorCache.get(repo);
+async function getAdvisorLines(repo: string, cwd: string, service?: string): Promise<string[]> {
+  const cacheKey = `${repo}::${service ?? ""}`;
+  const cached = advisorCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) {
     return cached.lines;
   }
@@ -150,17 +152,18 @@ async function buildPortfolioSection(
 // Main context builder
 // ---------------------------------------------------------------------------
 
-export async function buildContextString(repo: string, cwd?: string): Promise<string> {
+export async function buildContextString(repo: string, cwd?: string, service?: string): Promise<string> {
   const [lastSession, deferred] = await Promise.all([
-    getLastSessionSummary(repo),
-    getOpenDeferredWork(repo),
+    getLastSessionSummary(repo, service),
+    getOpenDeferredWork(repo, service),
   ]);
 
   const portfolioName = findPortfolioForRepo(repo);
   const repoBasename = repo.split("/").pop() ?? repo;
   const portfolioTag = portfolioName ? ` [portfolio: ${portfolioName}]` : "";
+  const serviceTag = service ? ` · service: ${service}` : "";
 
-  const parts: string[] = [`## claude-lore: session context — ${repoBasename}${portfolioTag}\n`];
+  const parts: string[] = [`## claude-lore: session context — ${repoBasename}${portfolioTag}${serviceTag}\n`];
 
   if (portfolioName) {
     const portfolioLines = await buildPortfolioSection(repo, portfolioName);
@@ -185,7 +188,7 @@ export async function buildContextString(repo: string, cwd?: string): Promise<st
   if (cwd) {
     try {
       const advisorLines = await Promise.race([
-        getAdvisorLines(repo, cwd),
+        getAdvisorLines(repo, cwd, service),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000)),
       ]);
 

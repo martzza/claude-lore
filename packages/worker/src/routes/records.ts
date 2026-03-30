@@ -83,29 +83,36 @@ router.post("/edit", async (req, res) => {
   }
 });
 
-// GET /api/records/pending?repo= — all extracted/inferred records awaiting review
+// GET /api/records/pending?repo=&service= — all extracted/inferred records awaiting review
 router.get("/pending", async (req, res) => {
   const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
-  const records = await getPendingRecords(repo);
+  const service = typeof req.query["service"] === "string" ? req.query["service"] : undefined;
+  const records = await getPendingRecords(repo, service);
   res.json({ records, count: records.length, total: records.length });
 });
 
-// GET /api/records/counts?repo= — summary counts for status command
+// GET /api/records/counts?repo=&service= — summary counts for status command
 router.get("/counts", async (req, res) => {
   const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
+  const service = typeof req.query["service"] === "string" ? req.query["service"] : undefined;
   if (!repo) {
     res.status(400).json({ error: "repo query param required" });
     return;
   }
+
+  // Build service filter clause for direct COUNT queries
+  const svcClause = service !== undefined ? " AND service IS ?" : "";
+  const svcArgs = (base: string[]): string[] => service !== undefined ? [...base, service] : base;
+
   const [decRes, riskRes, defRes, pendingRecords] = await Promise.all([
-    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM decisions WHERE repo = ?`, args: [repo] }),
-    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM risks WHERE repo = ?`, args: [repo] }),
-    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM deferred_work WHERE repo = ? AND status = 'open'`, args: [repo] }),
-    getPendingRecords(repo),
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM decisions WHERE repo = ?${svcClause}`, args: svcArgs([repo]) }),
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM risks WHERE repo = ?${svcClause}`, args: svcArgs([repo]) }),
+    sessionsDb.execute({ sql: `SELECT COUNT(*) as c FROM deferred_work WHERE repo = ? AND status = 'open'${svcClause}`, args: svcArgs([repo]) }),
+    getPendingRecords(repo, service),
   ]);
   const blockedRes = await sessionsDb.execute({
-    sql: `SELECT COUNT(*) as c FROM deferred_work WHERE repo = ? AND status = 'blocked'`,
-    args: [repo],
+    sql: `SELECT COUNT(*) as c FROM deferred_work WHERE repo = ? AND status = 'blocked'${svcClause}`,
+    args: svcArgs([repo]),
   });
   res.json({
     ok: true,

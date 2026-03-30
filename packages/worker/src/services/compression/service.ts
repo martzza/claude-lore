@@ -31,6 +31,7 @@ Return ONLY valid JSON, no markdown fences.`;
 export async function runCompressionPass(
   sessionId: string,
   repo: string,
+  service?: string,
 ): Promise<void> {
   // Guard: skip if session already completed (Stop hook fired twice)
   if (await isSessionComplete(sessionId)) return;
@@ -77,15 +78,15 @@ export async function runCompressionPass(
     return;
   }
 
-  // Persist extracted records
+  // Persist extracted records (carry service through from session)
   for (const d of result.decisions ?? []) {
-    await saveDecision(sessionId, repo, d.content, d.rationale, d.symbol);
+    await saveDecision(sessionId, repo, d.content, d.rationale, d.symbol, service);
   }
   for (const d of result.deferred ?? []) {
-    await saveDeferredWork(sessionId, repo, d.content, d.symbol);
+    await saveDeferredWork(sessionId, repo, d.content, d.symbol, service);
   }
   for (const r of result.risks ?? []) {
-    await saveRisk(sessionId, repo, r.content, r.symbol);
+    await saveRisk(sessionId, repo, r.content, r.symbol, service);
   }
 
   // Tag decisions nominated as ADR candidates with adr_status='draft'

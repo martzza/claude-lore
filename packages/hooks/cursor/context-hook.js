@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { detectService } from "./detect-service.js";
 
 const PORT = process.env.CLAUDE_LORE_PORT ?? "37778";
 
@@ -16,6 +17,7 @@ async function main() {
   // Sanitise: only alphanumeric, hyphens, underscores — prevents path traversal via ..
   const conversationId = rawId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 128);
   const repo = input.cwd ?? input.repo_path ?? process.cwd();
+  const service = detectService(repo);
   const lockFile = join(tmpdir(), `claude-lore-${conversationId}.lock`);
 
   // Inject context only once per conversation
@@ -32,15 +34,17 @@ async function main() {
     await fetch(`http://127.0.0.1:${PORT}/api/sessions/init`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: conversationId, repo }),
+      body: JSON.stringify({ session_id: conversationId, repo, ...(service ? { service } : {}) }),
       signal: AbortSignal.timeout(3000),
     });
   } catch {}
 
   // Fetch and inject context
   try {
+    const injectParams = new URLSearchParams({ repo });
+    if (service) injectParams.set("service", service);
     const res = await fetch(
-      `http://127.0.0.1:${PORT}/api/context/inject?repo=${encodeURIComponent(repo)}`,
+      `http://127.0.0.1:${PORT}/api/context/inject?${injectParams}`,
       { signal: AbortSignal.timeout(3000) },
     );
     if (res.ok) {

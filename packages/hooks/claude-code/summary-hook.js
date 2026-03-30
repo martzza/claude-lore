@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
+import { detectService } from "./detect-service.js";
 
 const PORT = process.env.CLAUDE_LORE_PORT ?? "37778";
 
@@ -14,13 +15,14 @@ async function main() {
 
   const sessionId = input.session_id ?? "unknown";
   const repo = input.cwd ?? input.repo_path ?? process.cwd();
+  const service = detectService(repo);
 
   // Trigger compression pass
   try {
     await fetch(`http://127.0.0.1:${PORT}/api/sessions/summarise`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, repo }),
+      body: JSON.stringify({ session_id: sessionId, repo, ...(service ? { service } : {}) }),
       signal: AbortSignal.timeout(3000),
     });
   } catch {}
