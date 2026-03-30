@@ -1,5 +1,6 @@
 import { sessionsDb } from "../sqlite/db.js";
 import { randomUUID } from "crypto";
+import { getGitEmail } from "../sync/service.js";
 
 export interface Session {
   id: string;
@@ -95,11 +96,12 @@ export async function saveDecision(
   service?: string,
 ): Promise<void> {
   const now = Date.now();
+  const createdBy = getGitEmail();
   await sessionsDb.execute({
     sql: `INSERT OR IGNORE INTO decisions
-            (id, repo, session_id, symbol, content, rationale, confidence, exported_tier, anchor_status, created_at, service)
-          VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?)`,
-    args: [randomUUID(), repo, sessionId, symbol ?? null, content, rationale ?? null, now, service ?? null],
+            (id, repo, session_id, symbol, content, rationale, confidence, exported_tier, anchor_status, created_at, service, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?)`,
+    args: [randomUUID(), repo, sessionId, symbol ?? null, content, rationale ?? null, now, service ?? null, createdBy],
   });
 }
 
@@ -111,11 +113,12 @@ export async function saveDeferredWork(
   service?: string,
 ): Promise<void> {
   const now = Date.now();
+  const createdBy = getGitEmail();
   await sessionsDb.execute({
     sql: `INSERT OR IGNORE INTO deferred_work
-            (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, status, created_at, service)
-          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', 'open', ?, ?)`,
-    args: [randomUUID(), repo, sessionId, symbol ?? null, content, now, service ?? null],
+            (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, status, created_at, service, created_by)
+          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', 'open', ?, ?, ?)`,
+    args: [randomUUID(), repo, sessionId, symbol ?? null, content, now, service ?? null, createdBy],
   });
 }
 
@@ -127,11 +130,12 @@ export async function saveRisk(
   service?: string,
 ): Promise<void> {
   const now = Date.now();
+  const createdBy = getGitEmail();
   await sessionsDb.execute({
     sql: `INSERT OR IGNORE INTO risks
-            (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service)
-          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?)`,
-    args: [randomUUID(), repo, sessionId, symbol ?? null, content, now, service ?? null],
+            (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service, created_by)
+          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?)`,
+    args: [randomUUID(), repo, sessionId, symbol ?? null, content, now, service ?? null, createdBy],
   });
 }
 
