@@ -354,6 +354,17 @@ async function initPersonalSchema(): Promise<void> {
         )`,
         args: [],
       },
+      {
+        sql: `CREATE TABLE IF NOT EXISTS global_memory (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tags TEXT,
+          injected INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )`,
+        args: [],
+      },
     ],
     "write",
   );

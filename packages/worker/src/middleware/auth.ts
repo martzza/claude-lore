@@ -1,27 +1,29 @@
 import type { Request, Response, NextFunction } from "express";
-import { validateToken, type Scope } from "../services/auth/service.js";
+import { validateToken, getMode, type Scope } from "../services/auth/service.js";
 
 export interface AuthLocals {
   author: string;
   scopes: Scope[];
 }
 
-// Dev mode: all scopes granted when no token is presented and auth is not required
-const DEV_AUTH: AuthLocals = {
+// All scopes granted — used in solo mode and when no token is presented in dev
+const FULL_AUTH: AuthLocals = {
   author: "dev",
   scopes: ["read", "write:sessions", "write:decisions"],
 };
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const authRequired = process.env["CLAUDE_LORE_AUTH_REQUIRED"] === "true";
+  const mode = getMode();
   const header = req.headers.authorization;
 
   if (!header?.startsWith("Bearer ")) {
-    if (authRequired) {
+    // Solo mode: no token required — grant full access (localhost-only assumption)
+    // Team mode: honour CLAUDE_LORE_AUTH_REQUIRED env var for backward-compat
+    if (mode === "team" && process.env["CLAUDE_LORE_AUTH_REQUIRED"] === "true") {
       res.status(401).json({ error: "Authorization required — provide Bearer token" });
       return;
     }
-    res.locals["auth"] = DEV_AUTH;
+    res.locals["auth"] = FULL_AUTH;
     next();
     return;
   }
@@ -39,6 +41,11 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
 
 export function requireScope(scope: Scope) {
   return (req: Request, res: Response, next: NextFunction): void => {
+    // Solo mode: all scopes implicitly granted — no token management needed
+    if (getMode() === "solo") {
+      next();
+      return;
+    }
     const auth = res.locals["auth"] as AuthLocals | undefined;
     if (!auth?.scopes.includes(scope)) {
       res.status(403).json({ error: `Scope '${scope}' required` });
