@@ -8,6 +8,8 @@ const CONFIG_PATH = join(homedir(), ".codegraph", "config.json");
 export const VALID_SCOPES = ["read", "write:sessions", "write:decisions"] as const;
 export type Scope = (typeof VALID_SCOPES)[number];
 
+export type LoreMode = "solo" | "team";
+
 export interface TokenRecord {
   token: string;
   author: string;
@@ -17,6 +19,7 @@ export interface TokenRecord {
 
 interface Config {
   tokens: TokenRecord[];
+  mode?: LoreMode;
 }
 
 function readConfig(): Config {
@@ -61,10 +64,36 @@ export function listTokens(): Array<{ masked: string; author: string; scopes: Sc
   }));
 }
 
+export function getMode(): LoreMode {
+  try {
+    if (!existsSync(CONFIG_PATH)) return "solo";
+    const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config;
+    return config.mode === "team" ? "team" : "solo";
+  } catch {
+    return "solo";
+  }
+}
+
+export function setMode(mode: LoreMode): void {
+  let config: Config = { tokens: [] };
+  if (existsSync(CONFIG_PATH)) {
+    try {
+      config = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config;
+    } catch {}
+  }
+  config.mode = mode;
+  writeConfig(config);
+}
+
 export function revokeToken(token: string): boolean {
   const config = readConfig();
+  const incoming = Buffer.from(token);
   const before = config.tokens.length;
-  config.tokens = config.tokens.filter((t) => t.token !== token);
+  config.tokens = config.tokens.filter((t) => {
+    const stored = Buffer.from(t.token);
+    if (stored.length !== incoming.length) return true; // keep — different token
+    return !timingSafeEqual(stored, incoming);
+  });
   if (config.tokens.length < before) {
     writeConfig(config);
     return true;

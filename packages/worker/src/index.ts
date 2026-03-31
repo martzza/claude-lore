@@ -18,6 +18,7 @@ import graphRouter from "./routes/graph.js";
 import annotationRouter from "./routes/annotation.js";
 import reviewRouter from "./routes/review.js";
 import syncRouter from "./routes/sync.js";
+import memoryRouter from "./routes/memory.js";
 
 const PORT = parseInt(process.env["CLAUDE_LORE_PORT"] ?? "37778", 10);
 
@@ -57,6 +58,7 @@ async function main(): Promise<void> {
   app.use("/api/annotation", annotationRouter);
   app.use("/api/review", reviewRouter);
   app.use("/api/sync", syncRouter);
+  app.use("/api/memory", memoryRouter);
 
   app.listen(PORT, "127.0.0.1", () => {
     console.log(`claude-lore worker listening on http://127.0.0.1:${PORT}`);

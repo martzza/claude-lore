@@ -238,13 +238,14 @@ to give agents context from day one.
 
 ```bash
 cd your-repo
-claude-lore init        # creates .codegraph/, registers hooks, optional Turso setup
+claude-lore init        # creates .codegraph/, registers hooks, Quick/Full setup prompt
 claude-lore bootstrap   # interactive wizard
 ```
 
-`init` now includes an optional team sync step — it will ask whether you want to
-configure Turso remote sync and collect the URL and token interactively. Solo
-developers can skip and configure later with `claude-lore team setup`.
+`init` offers a **Quick** (solo, ~2 min) or **Full** (team + Turso) setup path
+on first run. Both give you the complete knowledge graph — the only difference is
+whether Turso remote sync is configured. You can change this later with
+`claude-lore mode set team`.
 
 The bootstrap wizard:
 1. Scans `.md` files, ADRs, git history — extracts decisions, risks, deferred items
@@ -332,16 +333,22 @@ rather than prefixed with "session records suggest:".
 
 ## Personal layer
 
-Some notes belong only to you — not to the team, not to CI. The personal layer
-is stored at `~/.codegraph/personal.db`, outside any repo, and is never synced.
+Some notes belong only to you — not to the team, not to CI. There are two kinds:
+
+**Global memories** — cross-repo, injected into every session regardless of which
+repo you're working in. Managed via `claude-lore remember` (see
+[Persistent personal notes](#persistent-personal-notes) above).
+
+**Personal reasoning records** — repo-scoped, structured, confidence-scored.
+Use these for developer-specific observations about a specific codebase:
 
 ```
 /lore save [personal] I suspect the auth refactor introduced a subtle race condition
 ```
 
-Personal records are injected into your sessions but never appear in team sync,
-exports, or any remote store. Access control is enforced by file location, not
-permissions logic.
+Both are stored in `~/.codegraph/personal.db`, outside any repo, and are never
+synced in either solo or team mode. Access control is enforced by file location,
+not permissions logic.
 
 ---
 
@@ -394,8 +401,25 @@ cd your-repo
 claude-lore init
 ```
 
-`init` registers all five lifecycle hooks in `.claude/settings.json` and walks
-you through optional Turso team sync setup interactively.
+On first run, `init` asks whether you want **Quick** or **Full** setup:
+
+- **Quick (default)** — sets solo mode, skips all sync configuration, done in under 2 minutes. Everything works immediately: hooks, context injection, knowledge graph.
+- **Full** — sets team mode, walks you through Turso remote sync setup interactively.
+
+You can switch modes at any time — see [Solo and team modes](#solo-and-team-modes) below.
+
+After init, store things Claude should always know, across every repo:
+
+```bash
+claude-lore remember "always use postgres 16, never downgrade to 15"
+claude-lore remember "prefer pnpm over npm in all scripts" --tag tooling
+```
+
+Then run the bootstrap wizard to pre-populate the knowledge graph from your existing docs:
+
+```bash
+claude-lore bootstrap
+```
 
 ### Connect a repo (Cursor)
 
@@ -412,27 +436,70 @@ Then restart Cursor.
 
 ---
 
-## Team setup (Turso remote sync)
+## Solo and team modes
 
-By default claude-lore uses local libSQL files. `init` asks about this
-interactively — or configure it at any time:
+claude-lore runs in one of two modes, stored in `~/.codegraph/config.json`.
 
 ```bash
-claude-lore team setup
+claude-lore mode              # show current mode
+claude-lore mode set solo     # local-only, no auth required
+claude-lore mode set team     # Turso sync + auth tokens
 ```
 
-This prompts for your Turso URL and auth token, writes them to
-`~/.codegraph/config.json`, and tells you to restart the worker.
+**Solo mode** is the default. Everything runs locally. No tokens, no sync config,
+no Turso account needed. Full capability — service scoping, cross-repo portfolio,
+monorepo detection — all work identically.
 
-To generate per-developer auth tokens:
+**Team mode** enables Turso remote sync and requires auth tokens for write
+operations. Switch to team mode when you need shared decisions to be visible
+across multiple developers.
+
+`mode set team` will prompt for Turso credentials if they are not already
+configured, or you can configure first:
+
+```bash
+# Create a free database at https://turso.tech, then:
+claude-lore mode set team
+```
+
+To generate per-developer auth tokens once in team mode:
 
 ```bash
 claude-lore auth generate alice --scopes read,write:sessions,write:decisions
 claude-lore auth list
 ```
 
-Each developer has their own token. `personal.db` is never synced — it stays
-at `~/.codegraph/personal.db` and never leaves the machine.
+`personal.db` is never synced in either mode — it stays at
+`~/.codegraph/personal.db` and never leaves the machine.
+
+---
+
+## Persistent personal notes
+
+Store facts Claude should always know, across every repo and every session:
+
+```bash
+claude-lore remember "always use postgres 16"
+claude-lore remember "SSH jump alias: jump-prod" --tag infra
+claude-lore remember "prefer pnpm over npm" --tag tooling
+```
+
+These are injected at the top of every session context, before any repo-specific
+information — regardless of which repo you're working in.
+
+```bash
+claude-lore memories              # list injected memories
+claude-lore memories --all        # include paused
+claude-lore memories --tag infra  # filter by tag
+claude-lore forget <id>           # delete by short id (first 8 chars)
+claude-lore forget --tag tooling  # delete all with a tag
+claude-lore memory pause <id>     # stop injecting without deleting
+claude-lore memory resume <id>    # re-enable injection
+```
+
+This is separate from the structured reasoning layer (decisions, risks, deferred
+work). Global memories are free-form — use them for developer preferences,
+environment facts, and anything else Claude should carry into every conversation.
 
 ---
 
@@ -458,12 +525,23 @@ Available to both Claude Code and Cursor agents:
 
 ```bash
 # Setup
-claude-lore init                          # initialise repo + optional Turso setup
+claude-lore init                          # initialise repo — Quick or Full setup on first run
 claude-lore bootstrap                     # interactive bootstrap wizard
 claude-lore bootstrap --framework <name>  # specific template
 claude-lore bootstrap --dry-run           # preview without writing
 claude-lore bootstrap --list              # list available templates
-claude-lore team setup                    # configure Turso team sync
+
+# Mode
+claude-lore mode                          # show current mode (solo | team)
+claude-lore mode set solo                 # local-only, no auth required
+claude-lore mode set team                 # enable Turso sync + auth tokens
+
+# Persistent personal notes (cross-repo, always injected)
+claude-lore remember "<text>" [--tag]     # store a fact Claude should always know
+claude-lore memories [--tag] [--all]      # list stored notes
+claude-lore forget [<id>] [--tag]         # delete by short id or tag
+claude-lore memory pause <id>             # stop injecting without deleting
+claude-lore memory resume <id>            # re-enable injection
 
 # Review & confirm
 claude-lore review                        # walk through pending extracted records
@@ -491,9 +569,15 @@ claude-lore skills install [name]         # install canonical team skill
 # Worker
 claude-lore worker start|stop|restart|status
 
-# Auth (team)
+# Auth (team mode)
 claude-lore auth generate <author> [--scopes ...]
 claude-lore auth list
+claude-lore auth revoke <token>
+
+# Sync (team mode)
+claude-lore sync status
+claude-lore sync now
+claude-lore sync conflicts [--resolve <id>]
 ```
 
 ---

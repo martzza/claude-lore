@@ -325,6 +325,16 @@ async function runMigrations(): Promise<void> {
       await sessionsDb.execute(`CREATE INDEX IF NOT EXISTS ${name} ON ${table} ${cols}`);
     } catch {}
   }
+
+  // Phase 8: unique index on sync_conflicts to prevent duplicate unresolved conflicts
+  // from concurrent runSync() calls (both pass the resolved=0 check before either inserts)
+  try {
+    await sessionsDb.execute(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_conflicts_unresolved
+       ON sync_conflicts (table_name, record_id, conflict_type)
+       WHERE resolved = 0`,
+    );
+  } catch {} // partial index may not be supported in all libsql versions — safe to skip
 }
 
 async function initPersonalSchema(): Promise<void> {
@@ -341,6 +351,17 @@ async function initPersonalSchema(): Promise<void> {
           exported_tier TEXT NOT NULL DEFAULT 'personal',
           anchor_status TEXT NOT NULL DEFAULT 'healthy',
           created_at INTEGER NOT NULL
+        )`,
+        args: [],
+      },
+      {
+        sql: `CREATE TABLE IF NOT EXISTS global_memory (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tags TEXT,
+          injected INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
         )`,
         args: [],
       },

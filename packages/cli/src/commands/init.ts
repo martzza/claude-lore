@@ -75,6 +75,28 @@ function mergeCursorHooks(hooksPath: string, newConfig: Record<string, unknown>)
   writeFileSync(hooksPath, JSON.stringify(merged, null, 2));
 }
 
+function isFirstSetup(globalConfigPath: string): boolean {
+  if (!existsSync(globalConfigPath)) return true;
+  try {
+    const cfg = JSON.parse(readFileSync(globalConfigPath, "utf8")) as Record<string, unknown>;
+    return cfg["mode"] === undefined;
+  } catch {
+    return true;
+  }
+}
+
+function writeGlobalField(globalConfigPath: string, fields: Record<string, unknown>): void {
+  let cfg: Record<string, unknown> = {};
+  if (existsSync(globalConfigPath)) {
+    try {
+      cfg = JSON.parse(readFileSync(globalConfigPath, "utf8")) as Record<string, unknown>;
+    } catch {}
+  }
+  Object.assign(cfg, fields);
+  mkdirSync(join(homedir(), ".codegraph"), { recursive: true });
+  writeFileSync(globalConfigPath, JSON.stringify(cfg, null, 2));
+}
+
 export async function runInit(repoPath: string): Promise<void> {
   const loreRoot = findProjectRoot();
 
@@ -145,30 +167,45 @@ export async function runInit(repoPath: string): Promise<void> {
     writeFileSync(mcpPath, JSON.stringify(mergedMcp, null, 2));
   }
 
-  // ── Step 4: Team sync (Turso) — optional ────────────────────────────────
+  // ── Step 4: Mode + Team sync ─────────────────────────────────────────────
   const globalConfigPath = join(homedir(), ".codegraph", "config.json");
+  const firstSetup = isFirstSetup(globalConfigPath);
+
   const tursoAlreadyConfigured = (() => {
     if (!existsSync(globalConfigPath)) return false;
     try {
       const cfg = JSON.parse(readFileSync(globalConfigPath, "utf8")) as Record<string, unknown>;
-      return typeof cfg["turso_url"] === "string" && cfg["turso_url"].length > 0;
+      return typeof cfg["turso_url"] === "string" && (cfg["turso_url"] as string).length > 0;
     } catch { return false; }
   })();
 
-  if (!tursoAlreadyConfigured) {
+  if (tursoAlreadyConfigured) {
+    console.log("✓ Turso team sync already configured");
+    // Ensure mode is written if this is a first-setup-after-upgrade scenario
+    if (firstSetup) {
+      writeGlobalField(globalConfigPath, { mode: "team" });
+      console.log("✓ Mode set to: team");
+    }
+  } else if (firstSetup) {
+    // First time on this machine — offer quickstart vs full setup
     console.log();
     console.log("─────────────────────────────────────────────────────────");
-    console.log("  Team sync (optional)");
+    console.log("  Welcome to claude-lore");
     console.log("─────────────────────────────────────────────────────────");
-    console.log("  By default, claude-lore stores everything locally.");
-    console.log("  If you're working with a team, you can sync shared");
-    console.log("  decisions and risks via a free Turso database.\n");
-    console.log("  Solo developers can skip this — set it up later with:");
-    console.log("    claude-lore team setup\n");
+    console.log("  Quick setup  — solo mode, local-only, running in ~2 min");
+    console.log("  Full setup   — team mode, Turso sync, auth tokens\n");
 
-    const teamAnswer = await prompt("  Working with a team? Set up Turso sync now? (y/N): ");
+    const setupAnswer = await prompt("  Quick or full setup? [quick/full] (default: quick): ");
+    const doFull = setupAnswer.toLowerCase() === "full";
 
-    if (teamAnswer.toLowerCase() === "y" || teamAnswer.toLowerCase() === "yes") {
+    if (!doFull) {
+      // ── Quickstart path ────────────────────────────────────────────────
+      writeGlobalField(globalConfigPath, { mode: "solo" });
+      console.log("\n  ✓ Mode set to: solo");
+      console.log("  Solo mode: local-only, no auth required, no team sync.");
+      console.log("  Upgrade later: claude-lore mode set team\n");
+    } else {
+      // ── Full setup path ────────────────────────────────────────────────
       console.log();
       console.log("  Create a free database at https://turso.tech if you don't have one yet.");
       console.log("  Then run: turso db show <name> --url  and  turso db tokens create <name>\n");
@@ -177,25 +214,24 @@ export async function runInit(repoPath: string): Promise<void> {
       const tursoToken = await prompt("  Auth token: ");
 
       if (tursoUrl.startsWith("libsql://") && tursoToken.length > 0) {
-        let globalConfig: Record<string, unknown> = {};
-        if (existsSync(globalConfigPath)) {
-          try { globalConfig = JSON.parse(readFileSync(globalConfigPath, "utf8")) as Record<string, unknown>; } catch {}
-        }
-        globalConfig["turso_url"] = tursoUrl;
-        globalConfig["turso_auth_token"] = tursoToken;
-        mkdirSync(join(homedir(), ".codegraph"), { recursive: true });
-        writeFileSync(globalConfigPath, JSON.stringify(globalConfig, null, 2));
+        writeGlobalField(globalConfigPath, {
+          mode: "team",
+          turso_url: tursoUrl,
+          turso_auth_token: tursoToken,
+        });
         console.log("\n  ✓ Turso team sync configured (~/.codegraph/config.json)");
+        console.log("  ✓ Mode set to: team");
         console.log("  Restart the worker to activate:  claude-lore worker restart");
       } else {
         console.log("\n  Skipped — URL must start with libsql:// and token must not be empty.");
-        console.log("  Configure later:  claude-lore team setup");
+        console.log("  Defaulting to solo mode. Configure team sync later:");
+        console.log("    claude-lore mode set team");
+        writeGlobalField(globalConfigPath, { mode: "solo" });
       }
-    } else {
-      console.log("\n  Running in solo mode. Add team sync later with: claude-lore team setup");
     }
   } else {
-    console.log("✓ Turso team sync already configured");
+    // Returning user without Turso — show non-intrusive reminder
+    console.log("  (No team sync — run 'claude-lore mode set team' to configure)");
   }
 
   // ── Step 5: Next steps ───────────────────────────────────────────────────
@@ -204,4 +240,7 @@ export async function runInit(repoPath: string): Promise<void> {
   console.log();
   console.log("Run next:");
   console.log("  claude-lore bootstrap");
+  console.log();
+  console.log("Store a persistent note:");
+  console.log('  claude-lore remember "<anything claude should always know>"');
 }

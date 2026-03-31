@@ -5,6 +5,7 @@ import { analyseWorkflow } from "../advisor/workflow.js";
 import { analyseClaudeMd } from "../advisor/claudemd.js";
 import { findPortfolioForRepo } from "../portfolio/service.js";
 import { registryDb } from "../sqlite/db.js";
+import { getInjectableMemories } from "../memory/service.js";
 
 // ---------------------------------------------------------------------------
 // In-memory advisor cache (pre-warmed on planning-signal observations)
@@ -164,6 +165,29 @@ export async function buildContextString(repo: string, cwd?: string, service?: s
   const serviceTag = service ? ` · service: ${service}` : "";
 
   const parts: string[] = [`## claude-lore: session context — ${repoBasename}${portfolioTag}${serviceTag}\n`];
+
+  // Global memories — personal, cross-repo, always injected first
+  try {
+    const globalMemories = await getInjectableMemories();
+    if (globalMemories.length > 0) {
+      const MAX_MEMORIES = 20;
+      const shown = globalMemories.slice(0, MAX_MEMORIES);
+      const memLines: string[] = ["### Personal notes — always present"];
+      for (const m of shown) {
+        const tagLabel = m.tags ? ` *(${m.tags})*` : "";
+        memLines.push(`- ${m.content}${tagLabel}`);
+      }
+      if (globalMemories.length > MAX_MEMORIES) {
+        memLines.push(
+          `*(${globalMemories.length - MAX_MEMORIES} more — run \`claude-lore memories\`)*`,
+        );
+      }
+      memLines.push("");
+      parts.push(memLines.join("\n"));
+    }
+  } catch {
+    // personal.db unavailable — skip silently
+  }
 
   if (portfolioName) {
     const portfolioLines = await buildPortfolioSection(repo, portfolioName);

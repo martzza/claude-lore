@@ -518,6 +518,75 @@ program
     await runReviewPropagation(file, opts);
   });
 
+// claude-lore mode
+const modeCmd = program
+  .command("mode")
+  .description("Show or change the operating mode (solo | team)")
+  .action(async () => {
+    const { runModeShow } = await import("./commands/mode.js");
+    await runModeShow();
+  });
+
+modeCmd
+  .command("set <mode>")
+  .description("Set mode to solo or team")
+  .action(async (mode: string) => {
+    const { runModeSet } = await import("./commands/mode.js");
+    await runModeSet(mode);
+  });
+
+// claude-lore remember "<text>" [--tag <tag>]
+program
+  .command("remember <text>")
+  .description("Store a persistent personal note injected into every session")
+  .option("--tag <tag>", "Tag for grouping related memories")
+  .action(async (text: string, opts: { tag?: string }) => {
+    const { runRemember } = await import("./commands/memory.js");
+    await runRemember(text, opts);
+  });
+
+// claude-lore memories [--tag <tag>] [--all]
+program
+  .command("memories")
+  .description("List stored personal notes")
+  .option("--tag <tag>", "Filter by tag")
+  .option("--all", "Include paused (non-injected) memories")
+  .action(async (opts: { tag?: string; all?: boolean }) => {
+    const { runMemories } = await import("./commands/memory.js");
+    await runMemories(opts);
+  });
+
+// claude-lore forget [<id>] [--tag <tag>]
+program
+  .command("forget [id]")
+  .description("Delete a personal note by id, or all notes with a tag")
+  .option("--tag <tag>", "Delete all memories with this tag")
+  .action(async (id: string | undefined, opts: { tag?: string }) => {
+    const { runForget } = await import("./commands/memory.js");
+    await runForget(id, opts);
+  });
+
+// claude-lore memory pause/resume <id>
+const memoryCmd = program
+  .command("memory")
+  .description("Manage personal memory injection");
+
+memoryCmd
+  .command("pause <id>")
+  .description("Stop injecting a memory without deleting it")
+  .action(async (id: string) => {
+    const { runMemorySetInjected } = await import("./commands/memory.js");
+    await runMemorySetInjected(id, false);
+  });
+
+memoryCmd
+  .command("resume <id>")
+  .description("Re-enable injection of a paused memory")
+  .action(async (id: string) => {
+    const { runMemorySetInjected } = await import("./commands/memory.js");
+    await runMemorySetInjected(id, true);
+  });
+
 program.parseAsync(process.argv).catch((err) => {
   console.error(err);
   process.exit(1);
