@@ -74,9 +74,18 @@ export async function runModeSet(mode: string): Promise<void> {
           console.log("Invalid URL or empty token — aborting.");
           process.exit(1);
         }
-        config["turso_url"] = tursoUrl;
-        config["turso_auth_token"] = tursoToken;
+        // Re-read config after async prompts to avoid overwriting concurrent changes
+        const freshConfig = readConfig();
+        freshConfig["turso_url"] = tursoUrl;
+        freshConfig["turso_auth_token"] = tursoToken;
+        freshConfig["mode"] = "team";
+        writeConfig(freshConfig);
         console.log("✓ Turso credentials saved");
+        console.log(`✓ Mode set to: team`);
+        console.log("\nTeam mode active. Auth tokens are now required for write operations.");
+        console.log("Generate a token:  claude-lore auth generate <your-name>");
+        console.log("Restart worker to activate sync:  claude-lore worker restart");
+        return;
       } else {
         console.log("Aborted. Configure Turso first, then re-run: claude-lore mode set team");
         process.exit(1);
@@ -84,8 +93,10 @@ export async function runModeSet(mode: string): Promise<void> {
     }
   }
 
-  config["mode"] = mode;
-  writeConfig(config);
+  // Re-read config after any async operations before writing
+  const finalConfig = readConfig();
+  finalConfig["mode"] = mode;
+  writeConfig(finalConfig);
   console.log(`✓ Mode set to: ${mode}`);
 
   if (mode === "team") {

@@ -17,9 +17,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const header = req.headers.authorization;
 
   if (!header?.startsWith("Bearer ")) {
-    // Solo mode: no token required — grant full access (localhost-only assumption)
-    // Team mode: honour CLAUDE_LORE_AUTH_REQUIRED env var for backward-compat
-    if (mode === "team" && process.env["CLAUDE_LORE_AUTH_REQUIRED"] === "true") {
+    // Team mode: require a token by default. Opt out with CLAUDE_LORE_AUTH_REQUIRED=false
+    // (e.g. in a dev container where the network is already trusted).
+    // Solo mode: no token required — grant full access (localhost-only assumption).
+    if (mode === "team" && process.env["CLAUDE_LORE_AUTH_REQUIRED"] !== "false") {
       res.status(401).json({ error: "Authorization required — provide Bearer token" });
       return;
     }

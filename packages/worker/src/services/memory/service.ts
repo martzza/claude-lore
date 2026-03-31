@@ -1,6 +1,11 @@
 import { randomUUID } from "crypto";
 import { personalDb } from "../sqlite/db.js";
 
+/** Escape SQLite LIKE special characters so user-supplied tag values are treated as literals. */
+function escapeLike(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 export interface GlobalMemory {
   id: string;
   content: string;
@@ -27,9 +32,11 @@ export async function listMemories(opts: { tag?: string; injectedOnly?: boolean 
   const conditions: string[] = [];
 
   if (opts.tag) {
-    // Match exact tag or tag within comma-separated list
-    conditions.push(`(tags = ? OR tags LIKE ? OR tags LIKE ? OR tags LIKE ?)`);
-    args.push(opts.tag, `${opts.tag},%`, `%,${opts.tag}`, `%,${opts.tag},%`);
+    // Match exact tag or tag within comma-separated list.
+    // Escape LIKE wildcards so tag values are treated as literals.
+    const safe = escapeLike(opts.tag);
+    conditions.push(`(tags = ? OR tags LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')`);
+    args.push(opts.tag, `${safe},%`, `%,${safe}`, `%,${safe},%`);
   }
   if (opts.injectedOnly) {
     conditions.push(`injected = 1`);
@@ -60,10 +67,11 @@ export async function deleteMemory(id: string): Promise<boolean> {
 }
 
 export async function deleteMemoriesByTag(tag: string): Promise<number> {
+  const safe = escapeLike(tag);
   const res = await personalDb.execute({
     sql: `DELETE FROM global_memory
-          WHERE tags = ? OR tags LIKE ? OR tags LIKE ? OR tags LIKE ?`,
-    args: [tag, `${tag},%`, `%,${tag}`, `%,${tag},%`],
+          WHERE tags = ? OR tags LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\'`,
+    args: [tag, `${safe},%`, `%,${safe}`, `%,${safe},%`],
   });
   return res.rowsAffected ?? 0;
 }
@@ -79,5 +87,17 @@ export async function setInjected(id: string, injected: boolean): Promise<boolea
 }
 
 export async function getInjectableMemories(): Promise<GlobalMemory[]> {
-  return listMemories({ injectedOnly: true });
+  // Limit at DB level to cap context injection size regardless of how many memories exist
+  const res = await personalDb.execute({
+    sql: `SELECT * FROM global_memory WHERE injected = 1 ORDER BY created_at DESC LIMIT 50`,
+    args: [],
+  });
+  return res.rows.map((r) => ({
+    id: String(r["id"]),
+    content: String(r["content"]),
+    tags: r["tags"] != null ? String(r["tags"]) : null,
+    injected: Number(r["injected"]),
+    created_at: Number(r["created_at"]),
+    updated_at: Number(r["updated_at"]),
+  }));
 }

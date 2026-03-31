@@ -11,8 +11,8 @@ import {
 const router = Router();
 
 const AddBody = z.object({
-  content: z.string().min(1),
-  tags: z.string().optional(),
+  content: z.string().min(1).max(2000),
+  tags: z.string().max(200).optional(),
 });
 
 const SetInjectedBody = z.object({
