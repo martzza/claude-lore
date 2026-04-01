@@ -244,13 +244,147 @@ export async function runInit(repoPath: string): Promise<void> {
     console.log("  (No team sync — run 'claude-lore mode set team' to configure)");
   }
 
-  // ── Step 5: Next steps ───────────────────────────────────────────────────
+  // ── Step 5: CLAUDE.md ───────────────────────────────────────────────────
+  const claudeMdPath = join(repoPath, "CLAUDE.md");
+  if (!existsSync(claudeMdPath)) {
+    console.log();
+    console.log("  No CLAUDE.md found in this repo.");
+    console.log("  CLAUDE.md tells Claude about your project conventions and is loaded on every prompt.");
+    const createIt = await prompt("  Create a starter CLAUDE.md? [y/N]: ");
+    if (createIt.toLowerCase() === "y") {
+      // Try to detect project name from package.json
+      let projectName = repoPath.split("/").pop() ?? "this project";
+      const pkgPath = join(repoPath, "package.json");
+      if (existsSync(pkgPath)) {
+        try {
+          const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as Record<string, unknown>;
+          if (typeof pkg["name"] === "string") projectName = pkg["name"] as string;
+        } catch {}
+      }
+
+      const claudeMdContent = `# ${projectName}
+
+## What this codebase does
+
+[One paragraph — give Claude the 10-second context on what this project is and does]
+
+## Key conventions
+
+- [e.g. always use pnpm over npm]
+- [e.g. TypeScript strict mode throughout, no \`any\`]
+- [e.g. all API responses return \`{ ok: boolean }\` shape]
+
+## What to avoid
+
+- [e.g. never use X library — use Y instead]
+- [e.g. don't add error handling for internal-only code paths]
+
+## claude-lore
+
+This repo uses claude-lore for persistent agent memory. Decisions, risks, and
+deferred work are stored in the knowledge graph and injected at session start.
+
+- \`/lore <question>\` — query decisions, risks, deferred work, session history
+- \`/lore save <text>\` — record a decision or risk inline
+- \`/lore review\` — confirm or discard extracted records
+- \`/lore audit\` — review gap records from the last audit run
+- \`claude-lore review\` — CLI review of pending records
+- \`claude-lore audit --grep-only\` — verify bootstrap accuracy against code
+
+Keep this file lean — every token here is loaded on every prompt.
+Anything already captured in the knowledge graph does not need to be repeated here.
+`;
+      writeFileSync(claudeMdPath, claudeMdContent);
+      console.log("  ✓ Created CLAUDE.md — fill in the placeholder sections before your first session");
+    }
+  } else {
+    console.log("✓ CLAUDE.md exists");
+  }
+
+  // ── Step 6: Verification checklist ──────────────────────────────────────
   console.log();
-  console.log(`✓ claude-lore initialised in ${repoPath}`);
+  console.log("Setup verification");
+  console.log("──────────────────");
+
+  const checks: Array<{ label: string; ok: boolean; fix?: string }> = [
+    {
+      label: ".codegraph/config.json",
+      ok: existsSync(join(repoPath, ".codegraph", "config.json")),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: ".claude/settings.json (hooks)",
+      ok: (() => {
+        const p = join(repoPath, ".claude", "settings.json");
+        if (!existsSync(p)) return false;
+        try {
+          const s = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+          return typeof s["hooks"] === "object" && s["hooks"] !== null;
+        } catch { return false; }
+      })(),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: "Hook scripts (context-hook.js)",
+      ok: existsSync(join(loreRoot, "packages", "hooks", "claude-code", "context-hook.js")),
+      fix: "run: pnpm install from the claude-lore directory",
+    },
+    {
+      label: "~/.claude/commands/lore.md",
+      ok: existsSync(join(homedir(), ".claude", "commands", "lore.md")),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: "~/.codegraph/config.json (mode)",
+      ok: (() => {
+        const p = join(homedir(), ".codegraph", "config.json");
+        if (!existsSync(p)) return false;
+        try {
+          const c = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+          return typeof c["mode"] === "string";
+        } catch { return false; }
+      })(),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: "Worker (port 37778)",
+      ok: await (async () => {
+        try {
+          const r = await fetch("http://127.0.0.1:37778/health", { signal: AbortSignal.timeout(2000) });
+          return r.ok;
+        } catch { return false; }
+      })(),
+      fix: "run: claude-lore worker start",
+    },
+    {
+      label: "CLAUDE.md",
+      ok: existsSync(join(repoPath, "CLAUDE.md")),
+      fix: "re-run: claude-lore init  (will offer to create one)",
+    },
+  ];
+
+  let allOk = true;
+  for (const check of checks) {
+    if (check.ok) {
+      console.log(`  ✓  ${check.label}`);
+    } else {
+      console.log(`  ✗  ${check.label}`);
+      if (check.fix) console.log(`       → ${check.fix}`);
+      allOk = false;
+    }
+  }
+
+  // ── Step 7: Next steps ───────────────────────────────────────────────────
   console.log();
-  console.log("Run next:");
-  console.log("  claude-lore bootstrap");
-  console.log();
-  console.log("Store a persistent note:");
-  console.log('  claude-lore remember "<anything claude should always know>"');
+  if (allOk) {
+    console.log(`✓ claude-lore fully initialised in ${repoPath}`);
+    console.log();
+    console.log("Run next:");
+    console.log("  claude-lore bootstrap");
+    console.log();
+    console.log("Store a persistent note:");
+    console.log('  claude-lore remember "<anything claude should always know>"');
+  } else {
+    console.log("✗ Some checks failed — fix the issues above and re-run: claude-lore init");
+  }
 }
