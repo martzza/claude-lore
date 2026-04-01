@@ -147,6 +147,29 @@ All saved records get confidence: extracted. Only humans can promote to confirme
   },
 
   {
+    command: "/lore audit",
+    summary: "Review audit gap records — claims with no code evidence.",
+    mcp_tools: [],
+    detail: `Shows all records written by \`claude-lore audit\` that have pending_review=1.
+These are bootstrap claims where no matching code was found during the audit scan.
+
+For each gap record you can:
+  c <n>  confirm   — code supports this claim, mark as trusted
+  d <n>  dismiss   — bootstrap was wrong, deprecate the record
+  f <n>  defer     — convert a decision into a deferred_work item
+  u <n>  unknown   — can't verify right now, clear from queue
+
+Sub-commands:
+  /lore audit status    Last audit run statistics (claims found, gaps, cost)
+  /lore audit estimate  How to get a cost preview (runs in terminal)
+
+Distinct from /lore review — that handles unconfirmed extracted/inferred records.
+This handles the audit-specific gap queue (pending_review=1).`,
+    example: `/lore audit
+/lore audit status`,
+  },
+
+  {
     command: "/lore bootstrap",
     summary: "Run the bootstrap wizard for this repo.",
     mcp_tools: [],
@@ -237,6 +260,12 @@ export function renderFullReference(): string {
   lines.push(`  /lore status`);
   lines.push(`    Show what context your agent has right now — decisions,`);
   lines.push(`    risks, deferred items, and last session summary.`);
+  lines.push(``);
+  lines.push(`  /lore audit`);
+  lines.push(`    Review gap records from the last audit run. These are`);
+  lines.push(`    bootstrap claims where no matching code was found.`);
+  lines.push(`    Actions: confirm / dismiss / defer / unknown`);
+  lines.push(`    See also: claude-lore audit --estimate  (terminal)`);
   lines.push(``);
 
   lines.push("ADVISOR AND IMPROVEMENTS");
