@@ -74,6 +74,9 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "/lore review-diff" or "review my changes / pre-commit review" | `review_diff(repo, cwd)` — shows git diff with reasoning overlay |
 | "/lore review-propagation <file>" or "what breaks if I change X file" | `review_propagation(repo, cwd, file=X)` — blast radius for a file change |
 | "/lore review" or "review pending records" | `reasoning_pending(repo)` — interactive confirm/discard loop (see Review flow section) |
+| "/lore audit" or "review audit gaps" | `GET /api/records/pending?audit_only=true` — audit gap queue review (see audit skill) |
+| "/lore audit status" | `GET /api/audit/status?repo={cwd}` — last audit run stats |
+| "/lore audit estimate" | Direct to CLI: `claude-lore audit --estimate` — no API call needed |
 
 When in doubt, start with `reasoning_get` + `session_load` and extend based on what gaps
 appear in the initial results. For broad health or completeness questions, prefer

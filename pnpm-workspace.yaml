@@ -4,3 +4,4 @@ packages:
   - 'packages/hooks/cursor'
   - 'packages/cli'
   - 'plugins/claude-lore'
+  - 'benchmark'

@@ -11,6 +11,7 @@
     "dev": "bun --watch run src/index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.3",
     "commander": "^12.1.0",
     "zod": "^3.24.0"
   },

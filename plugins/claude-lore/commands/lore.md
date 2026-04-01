@@ -1,6 +1,6 @@
 ---
 description: Query and write to the claude-lore knowledge graph. Use for /lore questions about decisions, risks, deferred work, session history, and cross-repo dependencies.
-argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol> | review-map | review-diff [--base <ref>] | review-propagation <file>
+argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol> | review-map | review-diff [--base <ref>] | review-propagation <file> | audit | audit status | audit estimate
 allowed-tools: [Read, Glob, Grep]
 ---
 
@@ -290,6 +290,21 @@ Calls `review_propagation(repo, cwd, file)` via MCP.
 
 ```
 /lore review-propagation src/services/auth.ts
+```
+
+---
+
+### /lore audit
+
+Review gap records from the audit queue inline. Uses the `audit` skill.
+
+Gap records are written by `claude-lore audit` when bootstrap claims have no
+matching code evidence. This command lets you resolve them without leaving Claude Code.
+
+```
+/lore audit              Show pending gap records and enter review loop
+/lore audit status       Show last audit run statistics
+/lore audit estimate     Instructions to preview audit cost (free)
 ```
 
 ---
