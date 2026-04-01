@@ -257,6 +257,21 @@ program
     await runReview(opts);
   });
 
+// claude-lore audit
+program
+  .command("audit")
+  .description("Cross-check bootstrap records against code reality, detect gaps, and prompt for missing reasoning")
+  .option("--estimate", "Estimate verification cost without running the audit")
+  .option("--grep-only", "Skip LLM verification, use grep only (Phase 3)")
+  .option("--resume <audit_id>", "Resume a previously saved audit session (Phase 3)")
+  .option("--dry-run", "Run audit but do not write gap records to the DB")
+  .option("--repo <path>", "Path to repo (defaults to cwd)")
+  .option("--service <name>", "Filter to a specific service/package within a monorepo")
+  .action(async (opts: { estimate?: boolean; grepOnly?: boolean; resume?: string; dryRun?: boolean; repo?: string; service?: string }) => {
+    const { runAudit } = await import("./commands/audit.js");
+    await runAudit(opts);
+  });
+
 // claude-lore auth
 const authCmd = program.command("auth").description("Manage developer auth tokens");
 authCmd

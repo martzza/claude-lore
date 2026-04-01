@@ -29,6 +29,29 @@ With claude-lore, sessions start with a targeted context injection — only the
 decisions, risks, and deferred items relevant to this repo, compressed from prior
 sessions. Agents skip the re-exploration and go straight to productive work.
 
+### Measured results
+
+Tested against a real-world JavaScript project (~9,000 lines of code across
+~70 files) using static analysis of cold vs warm exploration paths for five
+typical architectural questions.
+
+| Session type | Context approach | Estimated tokens |
+|---|---|---|
+| Cold | Read relevant files from scratch | ~10,000–15,000 per question |
+| Warm (claude-lore) | Inject compressed graph records | ~1,500–2,000 per question |
+
+Estimated **60–70% reduction** in context tokens for architectural questions
+where the answer is already captured in the graph.
+
+The largest single driver in the test codebase was one 400-line core engine file
+(~10,000 tokens). With claude-lore, agents receive a 2–3 sentence compressed
+record instead of reading the file. Questions answered correctly in both cases —
+the warm session just costs significantly less.
+
+These are static analysis estimates, not live benchmark results. Actual savings
+depend on codebase structure, question type, and how well the graph has been
+populated.
+
 ### CLAUDE.md token optimisation
 
 Your CLAUDE.md file is loaded on every single prompt. Sections that duplicate
@@ -265,6 +288,34 @@ All bootstrapped records start as `confidence: inferred`. You promote them to
 
 ---
 
+## Auditing bootstrap accuracy
+
+Bootstrap reads documentation and extracts records — but docs describe intent,
+not always reality. The audit command cross-checks bootstrap claims against
+actual code and flags gaps for review.
+
+```bash
+claude-lore audit --estimate   # preview: file count, record count, estimated cost
+claude-lore audit --grep-only  # run: grep verification only, no API key required
+claude-lore audit              # run: grep + LLM verification for ambiguous cases
+```
+
+The audit classifies each imported record as verified (code found), ambiguous
+(weak match), or a gap (no code evidence). Gap records are written with
+`pending_review=1` and surfaced in both `claude-lore review` and `/lore audit`
+inside Claude Code.
+
+In testing on this repo (87 inferred records):
+- **82 records** grep-verified in under 10 seconds
+- **5 gap candidates** flagged for review
+- **Estimated cost** for a full LLM pass: ~$0.08
+
+If bootstrap detects significant behavioral claims (always/never/must patterns)
+or the repo has an established commit history, it will suggest running an audit
+automatically at the end of the wizard.
+
+---
+
 ## Using the graph in sessions
 
 Once connected, use `/lore` inside Claude Code:
@@ -359,6 +410,7 @@ not permissions logic.
 | Trigger | Skill | What it does |
 |---|---|---|
 | `/lore` | `kg-query` | Query decisions, risks, deferred work, session history |
+| `/lore audit` | `audit` | Review audit gap records inline without leaving Claude Code |
 | `/doc` | `kg-doc` | Generate runbooks, architecture docs, ADRs, onboarding guides |
 | `/review` | `review` | Open visual codebase map, diff review, propagation view |
 
@@ -545,6 +597,13 @@ claude-lore memory resume <id>            # re-enable injection
 
 # Review & confirm
 claude-lore review                        # walk through pending extracted records
+
+# Audit
+claude-lore audit                         # full audit: grep + LLM verification
+claude-lore audit --estimate              # cost preview (no API key, instant)
+claude-lore audit --grep-only             # grep only, no LLM
+claude-lore audit --resume <id>           # resume a paused audit session
+claude-lore audit --dry-run               # run without writing gap records
 
 # Advisor
 claude-lore advisor                       # full summary (all five analyses)

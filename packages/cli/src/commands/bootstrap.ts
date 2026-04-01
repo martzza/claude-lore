@@ -2,6 +2,9 @@ import { createInterface } from "readline";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { classifyClaim } from "../services/audit/cost-estimator.js";
+import { getCommitCount } from "../services/audit/git-historian.js";
+import { readdirSync, statSync } from "fs";
 
 const PORT = process.env["CLAUDE_LORE_PORT"] ?? "37778";
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -468,6 +471,97 @@ function showBootstrapSummary(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Audit suggestion — shown at end of bootstrap when signals warrant it
+// ---------------------------------------------------------------------------
+
+interface AuditSignals {
+  behavioralClaims: number;
+  commitCount: number;
+  codeFileCount: number;
+}
+
+function countCodeFiles(dir: string): number {
+  const CODE_EXTS = new Set([
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".py", ".go", ".rs", ".java", ".rb", ".cs", ".cpp", ".c",
+  ]);
+  const SKIP = new Set(["node_modules", ".git", "dist", "build", ".codegraph", ".next"]);
+  let count = 0;
+  function walk(d: string): void {
+    let entries: string[];
+    try { entries = readdirSync(d); } catch { return; }
+    for (const e of entries) {
+      if (SKIP.has(e)) continue;
+      const full = join(d, e);
+      let st;
+      try { st = statSync(full); } catch { continue; }
+      if (st.isDirectory()) walk(full);
+      else if (CODE_EXTS.has(e.slice(e.lastIndexOf(".")))) count++;
+    }
+  }
+  walk(dir);
+  return count;
+}
+
+function scoreAuditSignals(signals: AuditSignals): number {
+  let score = 0;
+  if (signals.behavioralClaims >= 5)  score++;
+  if (signals.behavioralClaims >= 15) score++;   // extra weight for many behavioral claims
+  if (signals.commitCount >= 100)     score++;
+  if (signals.codeFileCount >= 30)    score++;
+  return score;
+}
+
+async function showAuditSuggestion(
+  repo: string,
+  importResult: ImportResult | null,
+): Promise<void> {
+  try {
+    const behavioralClaims = (importResult?.records ?? []).filter(
+      (r) => classifyClaim(r.content) === "behavioral",
+    ).length;
+
+    const commitCount = getCommitCount(repo);
+    const codeFileCount = countCodeFiles(repo);
+
+    const signals: AuditSignals = { behavioralClaims, commitCount, codeFileCount };
+    const score = scoreAuditSignals(signals);
+
+    if (score < 2) return; // not enough signal to suggest
+
+    const reasons: string[] = [];
+    if (behavioralClaims >= 5) {
+      reasons.push(`${behavioralClaims} behavioral claim${behavioralClaims !== 1 ? "s" : ""} found (always/never/must/validates patterns)`);
+    }
+    if (commitCount >= 100) {
+      reasons.push(`${commitCount.toLocaleString()} commits — established codebase`);
+    }
+    if (codeFileCount >= 30) {
+      reasons.push(`${codeFileCount} code files to cross-check`);
+    }
+
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("  AUDIT SUGGESTION");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    console.log("  The imported records describe what your documentation says.");
+    console.log("  An audit cross-checks whether the code actually implements");
+    console.log("  what those docs claim — and flags gaps for your review.\n");
+    console.log("  Signals that suggest an audit is worthwhile:");
+    for (const reason of reasons) {
+      console.log(`    • ${reason}`);
+    }
+    console.log("\n  Preview cost first (free — no LLM calls):");
+    console.log("    claude-lore audit --estimate\n");
+    console.log("  Run the full audit:");
+    console.log("    claude-lore audit --grep-only   (fast, no API key needed)");
+    console.log("    claude-lore audit               (full, uses LLM for ambiguous cases)\n");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  } catch {
+    // Suggestion is always optional — never block bootstrap
+  }
+}
+
 export async function runBootstrap(opts: {
   framework?: string;
   dryRun?: boolean;
@@ -550,6 +644,7 @@ export async function runBootstrap(opts: {
       if (answer === "" || answer === "none") {
         if (isFirstRun) {
           showBootstrapSummary(importResult, [], true);
+          await showAuditSuggestion(repo, importResult);
         } else {
           console.log("No templates selected.");
         }
@@ -621,4 +716,8 @@ export async function runBootstrap(opts: {
   }
 
   showBootstrapSummary(importResult, results, isFirstRun);
+
+  if (isFirstRun) {
+    await showAuditSuggestion(repo, importResult);
+  }
 }

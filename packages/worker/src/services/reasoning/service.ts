@@ -44,7 +44,7 @@ export async function getReasoningData(
   repo?: string,
   service?: string,
 ): Promise<ReasoningGetResult> {
-  const where: string[] = [];
+  const where: string[] = ["deprecated_by IS NULL"];
   const args: (string | null)[] = [];
 
   if (repo) {
@@ -60,12 +60,12 @@ export async function getReasoningData(
     args.push(service ?? null);
   }
 
-  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const clause = `WHERE ${where.join(" AND ")}`;
 
   const [decisionsRes, deferredRes, risksRes] = await Promise.all([
     sessionsDb.execute({ sql: `SELECT * FROM decisions ${clause} ORDER BY created_at DESC`, args }),
     sessionsDb.execute({
-      sql: `SELECT * FROM deferred_work ${clause} ${clause ? "AND status = 'open'" : "WHERE status = 'open'"} ORDER BY created_at DESC`,
+      sql: `SELECT * FROM deferred_work ${clause} AND status = 'open' ORDER BY created_at DESC`,
       args,
     }),
     sessionsDb.execute({ sql: `SELECT * FROM risks ${clause} ORDER BY created_at DESC`, args }),
@@ -189,9 +189,16 @@ const TABLE_TO_TYPE: Record<string, string> = {
   personal_records: "personal",
 };
 
-export async function getPendingRecords(repo?: string, service?: string): Promise<PendingRecord[]> {
-  const where: string[] = ["confidence IN (?, ?)"];
-  const args: (string | null)[] = ["extracted", "inferred"];
+export async function getPendingRecords(repo?: string, service?: string, auditOnly = false): Promise<PendingRecord[]> {
+  const where: string[] = ["deprecated_by IS NULL"];
+
+  if (auditOnly) {
+    where.push("pending_review = 1");
+  } else {
+    where.push("confidence IN (?, ?)");
+  }
+
+  const args: (string | null)[] = auditOnly ? [] : ["extracted", "inferred"];
 
   if (repo) {
     where.push("repo = ?");

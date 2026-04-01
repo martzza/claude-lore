@@ -155,7 +155,7 @@ export async function getLastSessionSummary(repo: string, service?: string): Pro
 }
 
 export async function getOpenDeferredWork(repo: string, service?: string): Promise<unknown[]> {
-  const where = ["repo = ?", "status = 'open'"];
+  const where = ["repo = ?", "status = 'open'", "deprecated_by IS NULL"];
   const args: (string | null)[] = [repo];
   if (service !== undefined) {
     where.push("service IS ?");

@@ -335,6 +335,45 @@ async function runMigrations(): Promise<void> {
        WHERE resolved = 0`,
     );
   } catch {} // partial index may not be supported in all libsql versions — safe to skip
+
+  // Phase 9: audit deprecation + pending_review tracking
+  const auditRecordCols = [
+    `ALTER TABLE decisions    ADD COLUMN deprecated_by   TEXT`,
+    `ALTER TABLE decisions    ADD COLUMN deprecated_at   INTEGER`,
+    `ALTER TABLE decisions    ADD COLUMN pending_review  INTEGER DEFAULT 0`,
+    `ALTER TABLE decisions    ADD COLUMN audit_id        TEXT`,
+    `ALTER TABLE deferred_work ADD COLUMN deprecated_by  TEXT`,
+    `ALTER TABLE deferred_work ADD COLUMN deprecated_at  INTEGER`,
+    `ALTER TABLE deferred_work ADD COLUMN pending_review INTEGER DEFAULT 0`,
+    `ALTER TABLE deferred_work ADD COLUMN audit_id       TEXT`,
+    `ALTER TABLE risks        ADD COLUMN deprecated_by   TEXT`,
+    `ALTER TABLE risks        ADD COLUMN deprecated_at   INTEGER`,
+    `ALTER TABLE risks        ADD COLUMN pending_review  INTEGER DEFAULT 0`,
+    `ALTER TABLE risks        ADD COLUMN audit_id        TEXT`,
+  ];
+  for (const sql of auditRecordCols) {
+    try { await sessionsDb.execute(sql); } catch {} // column already exists — safe to skip
+  }
+
+  // audit_runs — one row per claude-lore audit invocation
+  try {
+    await sessionsDb.execute(`
+      CREATE TABLE IF NOT EXISTS audit_runs (
+        id                 TEXT    PRIMARY KEY,
+        repo               TEXT    NOT NULL,
+        started_at         INTEGER NOT NULL,
+        completed_at       INTEGER,
+        status             TEXT    NOT NULL DEFAULT 'in_progress',
+        mode               TEXT    NOT NULL DEFAULT 'full',
+        claims_found       INTEGER DEFAULT 0,
+        behavioral_claims  INTEGER DEFAULT 0,
+        gaps_found         INTEGER DEFAULT 0,
+        records_created    INTEGER DEFAULT 0,
+        records_deprecated INTEGER DEFAULT 0,
+        created_at         INTEGER NOT NULL
+      )
+    `);
+  } catch {}
 }
 
 async function initPersonalSchema(): Promise<void> {

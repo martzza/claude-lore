@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      claude-lore:
+        specifier: link:claude-lore
+        version: link:claude-lore
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -15,8 +19,20 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  benchmark:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.36.0
+        version: 0.36.3
+      '@libsql/client':
+        specifier: ^0.14.0
+        version: 0.14.0
+
   packages/cli:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.36.3
+        version: 0.36.3
       commander:
         specifier: ^12.1.0
         version: 12.1.0

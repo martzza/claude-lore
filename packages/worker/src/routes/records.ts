@@ -3,6 +3,7 @@ import { z } from "zod";
 import { confirmRecord, discardRecord, discardBySource, getPendingRecords } from "../services/reasoning/service.js";
 import { sessionsDb } from "../services/sqlite/db.js";
 import { requireScope } from "../middleware/auth.js";
+import { getGitEmail } from "../services/sync/service.js";
 
 const router = Router();
 
@@ -20,19 +21,123 @@ const DiscardBySourceBody = z.object({
   source: z.string(),
 });
 
-// POST /api/records/confirm — promote to "confirmed", records confirmed_by from git config
+// Extended confirm body — supports audit review actions
+const ConfirmBody = RecordRefBody.extend({
+  action: z.enum(["confirm", "defer", "dismiss", "unknown"]).optional(),
+  reasoning: z.string().optional(),
+});
+
+// POST /api/records/confirm — promote to "confirmed", optionally with audit action + reasoning
 router.post("/confirm", requireScope("write:decisions"), async (req, res) => {
-  const parsed = RecordRefBody.safeParse(req.body);
+  const parsed = ConfirmBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const { id, table } = parsed.data;
-  try {
-    await confirmRecord(id, table);
-    res.json({ ok: true, id, table, confidence: "confirmed" });
-  } catch (err) {
-    res.status(400).json({ error: String(err) });
+  const { id, table, action = "confirm", reasoning } = parsed.data;
+
+  // Simple confirm (original behaviour) — no action or action=confirm
+  if (action === "confirm") {
+    try {
+      await confirmRecord(id, table);
+      if (reasoning) {
+        await sessionsDb.execute({
+          sql: `UPDATE ${table} SET rationale = ?, pending_review = 0 WHERE id = ?`,
+          args: [reasoning, id],
+        });
+      } else {
+        await sessionsDb.execute({
+          sql: `UPDATE ${table} SET pending_review = 0 WHERE id = ?`,
+          args: [id],
+        });
+      }
+      res.json({ ok: true, id, table, action, confidence: "confirmed" });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+    return;
+  }
+
+  // action=unknown — leave as-is but clear pending_review so it stops appearing in queue
+  if (action === "unknown") {
+    try {
+      await sessionsDb.execute({
+        sql: `UPDATE ${table} SET pending_review = 0 WHERE id = ?`,
+        args: [id],
+      });
+      res.json({ ok: true, id, table, action });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+    return;
+  }
+
+  // action=dismiss — soft-delete: mark deprecated_by='dismissed', clear pending_review
+  if (action === "dismiss") {
+    try {
+      await sessionsDb.execute({
+        sql: `UPDATE ${table} SET deprecated_by = 'dismissed', deprecated_at = ?, pending_review = 0 WHERE id = ?`,
+        args: [Date.now(), id],
+      });
+      res.json({ ok: true, id, table, action });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+    return;
+  }
+
+  // action=defer — only valid for decisions: converts to a deferred_work record
+  if (action === "defer") {
+    if (table !== "decisions") {
+      res.status(400).json({ error: "action=defer is only valid for decisions records" });
+      return;
+    }
+    try {
+      // Fetch the original record
+      const orig = await sessionsDb.execute({
+        sql: `SELECT * FROM decisions WHERE id = ?`,
+        args: [id],
+      });
+      if (orig.rows.length === 0) {
+        res.status(404).json({ error: "Record not found" });
+        return;
+      }
+      const row = orig.rows[0] as Record<string, unknown>;
+      const email = getGitEmail();
+      const now = Date.now();
+      const newId = `deferred-${id}`;
+
+      // Write deferred record with provided reasoning as rationale
+      await sessionsDb.execute({
+        sql: `INSERT OR IGNORE INTO deferred_work
+                (id, repo, session_id, symbol, content, confidence, exported_tier,
+                 anchor_status, status, source, audit_id, pending_review, confirmed_by, created_at)
+              VALUES (?, ?, ?, ?, ?, 'confirmed', ?, 'healthy', 'open', ?, ?, 0, ?, ?)`,
+        args: [
+          newId,
+          String(row["repo"]),
+          row["session_id"] != null ? String(row["session_id"]) : null,
+          row["symbol"] != null ? String(row["symbol"]) : null,
+          reasoning ? `${String(row["content"])} — ${reasoning}` : String(row["content"]),
+          String(row["exported_tier"] ?? "private"),
+          String(row["source"] ?? "audit:manual"),
+          row["audit_id"] != null ? String(row["audit_id"]) : null,
+          email,
+          now,
+        ],
+      });
+
+      // Deprecate the original decision record
+      await sessionsDb.execute({
+        sql: `UPDATE decisions SET deprecated_by = ?, deprecated_at = ?, pending_review = 0 WHERE id = ?`,
+        args: [newId, now, id],
+      });
+
+      res.json({ ok: true, id, new_id: newId, table: "deferred_work", action });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+    return;
   }
 });
 
@@ -83,11 +188,13 @@ router.post("/edit", requireScope("write:decisions"), async (req, res) => {
   }
 });
 
-// GET /api/records/pending?repo=&service= — all extracted/inferred records awaiting review
+// GET /api/records/pending?repo=&service=&audit_only=true
+// audit_only=true filters to records with pending_review=1 (audit gap queue only)
 router.get("/pending", async (req, res) => {
   const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
   const service = typeof req.query["service"] === "string" ? req.query["service"] : undefined;
-  const records = await getPendingRecords(repo, service);
+  const auditOnly = req.query["audit_only"] === "true";
+  const records = await getPendingRecords(repo, service, auditOnly);
   res.json({ records, count: records.length, total: records.length });
 });
 
