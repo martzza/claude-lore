@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { createInterface } from "readline";
@@ -138,7 +138,17 @@ export async function runInit(repoPath: string): Promise<void> {
   mergeSettings(settingsPath, buildClaudeHooks(loreRoot));
   console.log("✓ Registered in .claude/settings.json");
 
-  // ── Step 3b: .cursor/ (only if it already exists) ───────────────────────
+  // ── Step 3b: ~/.claude/commands/lore.md ─────────────────────────────────
+  const globalCommandsDir = join(homedir(), ".claude", "commands");
+  mkdirSync(globalCommandsDir, { recursive: true });
+  const loreCommandSrc = join(loreRoot, "plugins", "claude-lore", "commands", "lore.md");
+  const loreCommandDst = join(globalCommandsDir, "lore.md");
+  if (existsSync(loreCommandSrc)) {
+    copyFileSync(loreCommandSrc, loreCommandDst);
+    console.log("✓ Installed /lore command to ~/.claude/commands/lore.md");
+  }
+
+  // ── Step 3c: .cursor/ (only if it already exists) ───────────────────────
   const cursorDir = join(repoPath, ".cursor");
   if (existsSync(cursorDir)) {
     const cursorHooksPath = join(cursorDir, "hooks.json");
