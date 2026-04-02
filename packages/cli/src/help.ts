@@ -81,6 +81,28 @@ export const CLI_COMMANDS: CommandHelp[] = [
   },
 
   {
+    name: "index",
+    group: "getting-started",
+    summary: "Build the structural index — symbols and call graph for this repo.",
+    description:
+      "Scans all TypeScript and JavaScript files, extracts symbol definitions and call relationships, and writes them to .codegraph/structural.db. Required for codegraph_* MCP tools (codegraph_search, codegraph_callers, codegraph_impact, codegraph_context). Re-run after significant code changes; skips automatically if the git commit SHA is unchanged.",
+    usage: [
+      "claude-lore index              Build or update the structural index",
+      "claude-lore index --force      Force full rebuild (ignores commit SHA)",
+      "claude-lore index --service <n>  Scope to one service in a monorepo",
+    ],
+    flags: [
+      { flag: "--force",          desc: "Rebuild even if commit SHA is unchanged" },
+      { flag: "--service <name>", desc: "Scope to a monorepo service" },
+    ],
+    examples: [
+      { command: "claude-lore index",        desc: "First-time index — run after init" },
+      { command: "claude-lore index --force", desc: "Full rebuild after major refactor" },
+    ],
+    seeAlso: ["init", "doctor", "graph"],
+  },
+
+  {
     name: "init",
     group: "getting-started",
     summary: "Initialise a repo for claude-lore.",
