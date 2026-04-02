@@ -390,13 +390,13 @@ export async function assembleSummary(): Promise<DashboardSummary> {
       groupCount("risks"),
       groupCount("deferred_work", "WHERE status='open'"),
       groupCount("decisions", "WHERE confidence='confirmed'"),
-      groupCount("decisions", "WHERE confidence='extracted' AND (pending_review IS NULL OR pending_review = 0) AND deprecated_by IS NULL"),
+      groupCount("decisions", "WHERE confidence='extracted' AND (pending_review IS NULL OR pending_review = 0) AND deprecated_by IS NULL AND lifecycle_status = 'active'"),
       groupCount("sessions"),
     ]);
 
   // Pending review across all tables
-  const pendingRisksMap = await groupCount("risks", "WHERE confidence='extracted' AND deprecated_by IS NULL");
-  const pendingDeferredMap = await groupCount("deferred_work", "WHERE confidence='extracted' AND status='open' AND deprecated_by IS NULL");
+  const pendingRisksMap = await groupCount("risks", "WHERE confidence='extracted' AND deprecated_by IS NULL AND lifecycle_status = 'active'");
+  const pendingDeferredMap = await groupCount("deferred_work", "WHERE confidence='extracted' AND status='open' AND deprecated_by IS NULL AND lifecycle_status = 'active'");
 
   // Pending review by repo: sum across all tables
   const allPendingRepos = new Set([...pendingMap.keys(), ...pendingRisksMap.keys(), ...pendingDeferredMap.keys()]);
@@ -547,7 +547,7 @@ export async function assembleSummary(): Promise<DashboardSummary> {
 
   try {
     const r = await sessionsDb.execute({
-      sql: `SELECT id, repo, content, symbol FROM risks WHERE deprecated_by IS NULL ORDER BY created_at DESC`,
+      sql: `SELECT id, repo, content, symbol FROM risks WHERE deprecated_by IS NULL AND lifecycle_status = 'active' ORDER BY created_at DESC`,
       args: [],
     });
     for (const row of r.rows) {
@@ -560,7 +560,7 @@ export async function assembleSummary(): Promise<DashboardSummary> {
 
   try {
     const r = await sessionsDb.execute({
-      sql: `SELECT id, repo, content FROM deferred_work WHERE status='open' AND deprecated_by IS NULL ORDER BY created_at DESC`,
+      sql: `SELECT id, repo, content FROM deferred_work WHERE status='open' AND deprecated_by IS NULL AND lifecycle_status = 'active' ORDER BY created_at DESC`,
       args: [],
     });
     for (const row of r.rows) {
@@ -718,7 +718,7 @@ export async function assembleSummary(): Promise<DashboardSummary> {
   const reviewByRepo: SystemSummary["review_queue"]["by_repo"] = [];
   try {
     const r = await sessionsDb.execute({
-      sql: `SELECT repo, COUNT(*) as c, MIN(created_at) as oldest FROM decisions WHERE confidence='extracted' AND deprecated_by IS NULL GROUP BY repo`,
+      sql: `SELECT repo, COUNT(*) as c, MIN(created_at) as oldest FROM decisions WHERE confidence='extracted' AND deprecated_by IS NULL AND lifecycle_status = 'active' GROUP BY repo`,
       args: [],
     });
     for (const row of r.rows) {

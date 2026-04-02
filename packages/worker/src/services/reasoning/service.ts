@@ -44,7 +44,7 @@ export async function getReasoningData(
   repo?: string,
   service?: string,
 ): Promise<ReasoningGetResult> {
-  const where: string[] = ["deprecated_by IS NULL"];
+  const where: string[] = ["deprecated_by IS NULL", "lifecycle_status = 'active'"];
   const args: (string | null)[] = [];
 
   if (repo) {
@@ -190,7 +190,7 @@ const TABLE_TO_TYPE: Record<string, string> = {
 };
 
 export async function getPendingRecords(repo?: string, service?: string, auditOnly = false): Promise<PendingRecord[]> {
-  const where: string[] = ["deprecated_by IS NULL"];
+  const where: string[] = ["deprecated_by IS NULL", "lifecycle_status = 'active'"];
 
   if (auditOnly) {
     where.push("pending_review = 1");

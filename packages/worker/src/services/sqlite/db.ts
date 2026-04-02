@@ -355,6 +355,83 @@ async function runMigrations(): Promise<void> {
     try { await sessionsDb.execute(sql); } catch {} // column already exists — safe to skip
   }
 
+  // Phase 10: lifecycle_status + last_reviewed_at + reviewed_by on all mutable record tables
+  const lifecycleMigrations = [
+    `ALTER TABLE decisions    ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'`,
+    `ALTER TABLE decisions    ADD COLUMN last_reviewed_at INTEGER`,
+    `ALTER TABLE decisions    ADD COLUMN reviewed_by TEXT`,
+    `ALTER TABLE deferred_work ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'`,
+    `ALTER TABLE deferred_work ADD COLUMN last_reviewed_at INTEGER`,
+    `ALTER TABLE deferred_work ADD COLUMN reviewed_by TEXT`,
+    `ALTER TABLE risks        ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'`,
+    `ALTER TABLE risks        ADD COLUMN last_reviewed_at INTEGER`,
+    `ALTER TABLE risks        ADD COLUMN reviewed_by TEXT`,
+  ];
+  for (const sql of lifecycleMigrations) {
+    try { await sessionsDb.execute(sql); } catch {} // column already exists — expected on re-run
+  }
+
+  // Backfill: decisions with deprecated_by set → lifecycle_status superseded or archived
+  await sessionsDb.execute(`
+    UPDATE decisions
+    SET lifecycle_status = CASE
+      WHEN deprecated_by = 'dismissed' THEN 'archived'
+      WHEN deprecated_by IS NOT NULL    THEN 'superseded'
+      ELSE 'active'
+    END
+    WHERE lifecycle_status = 'active' AND deprecated_by IS NOT NULL
+  `);
+
+  // Phase 10: relationship fields on decisions
+  const decisionRelMigrations = [
+    `ALTER TABLE decisions ADD COLUMN supersedes    TEXT`,
+    `ALTER TABLE decisions ADD COLUMN superseded_by TEXT`,
+    `ALTER TABLE decisions ADD COLUMN superseded_at INTEGER`,
+    `ALTER TABLE decisions ADD COLUMN amendment_of  TEXT`,
+  ];
+  for (const sql of decisionRelMigrations) {
+    try { await sessionsDb.execute(sql); } catch {}
+  }
+
+  // Backfill: where deprecated_by holds a record ID (not 'dismissed'), copy to superseded_by
+  await sessionsDb.execute(`
+    UPDATE decisions
+    SET superseded_by = deprecated_by
+    WHERE deprecated_by IS NOT NULL
+      AND deprecated_by != 'dismissed'
+      AND superseded_by IS NULL
+  `);
+
+  // Phase 10: resolution fields on deferred_work
+  const deferredRelMigrations = [
+    `ALTER TABLE deferred_work ADD COLUMN resolved_how         TEXT`,
+    `ALTER TABLE deferred_work ADD COLUMN resolved_note        TEXT`,
+    `ALTER TABLE deferred_work ADD COLUMN touched_by_sessions  TEXT DEFAULT '[]'`,
+  ];
+  for (const sql of deferredRelMigrations) {
+    try { await sessionsDb.execute(sql); } catch {}
+  }
+
+  // Phase 10: risk mitigation + acceptance fields
+  const riskRelMigrations = [
+    `ALTER TABLE risks ADD COLUMN mitigated_at             INTEGER`,
+    `ALTER TABLE risks ADD COLUMN mitigation_confirmed_by  TEXT`,
+    `ALTER TABLE risks ADD COLUMN mitigation_note          TEXT`,
+    `ALTER TABLE risks ADD COLUMN accepted_at              INTEGER`,
+    `ALTER TABLE risks ADD COLUMN accepted_by              TEXT`,
+    `ALTER TABLE risks ADD COLUMN acceptance_note          TEXT`,
+  ];
+  for (const sql of riskRelMigrations) {
+    try { await sessionsDb.execute(sql); } catch {}
+  }
+
+  // Indexes for lifecycle_status queries
+  try {
+    await sessionsDb.execute(`CREATE INDEX IF NOT EXISTS idx_decisions_lifecycle  ON decisions(lifecycle_status)`);
+    await sessionsDb.execute(`CREATE INDEX IF NOT EXISTS idx_deferred_lifecycle   ON deferred_work(lifecycle_status)`);
+    await sessionsDb.execute(`CREATE INDEX IF NOT EXISTS idx_risks_lifecycle      ON risks(lifecycle_status)`);
+  } catch {}
+
   // audit_runs — one row per claude-lore audit invocation
   try {
     await sessionsDb.execute(`

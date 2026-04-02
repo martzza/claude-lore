@@ -77,7 +77,9 @@ async function queryExported(
   const res = await sessionsDb.execute({
     sql: `SELECT id, symbol, content, confidence, exported_tier, anchor_status, created_at
           FROM ${table}
-          WHERE repo = ? AND exported_tier NOT IN ('private', 'personal')`,
+          WHERE repo = ?
+            AND exported_tier NOT IN ('private', 'personal')
+            AND (lifecycle_status IS NULL OR lifecycle_status = 'active')`,
     args: [repo],
   });
   return res.rows
