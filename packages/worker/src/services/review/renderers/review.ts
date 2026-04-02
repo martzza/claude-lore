@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
 import { sessionsDb } from "../../sqlite/db.js";
@@ -48,8 +48,8 @@ export function getGitDiff(cwd: string, base?: string): DiffFile[] {
 
   try {
     // Get list of changed files with status
-    const nameStatus = execSync(
-      `git -C "${cwd}" diff --name-status ${baseRef}`,
+    const nameStatus = execFileSync(
+      "git", ["-C", cwd, "diff", "--name-status", baseRef],
       { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
     ).trim();
 
@@ -68,8 +68,8 @@ export function getGitDiff(cwd: string, base?: string): DiffFile[] {
       // Get patch for this file
       let patch = "";
       try {
-        patch = execSync(
-          `git -C "${cwd}" diff ${baseRef} -- "${filePath}"`,
+        patch = execFileSync(
+          "git", ["-C", cwd, "diff", baseRef, "--", filePath],
           { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], maxBuffer: 1024 * 1024 },
         );
       } catch { /* ok */ }

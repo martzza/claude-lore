@@ -1,18 +1,16 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { join } from "path";
-import { existsSync } from "fs";
-import { createClient } from "@libsql/client";
+import { getStructuralClient } from "../../services/structural/db-cache.js";
 import { getReasoningData } from "../../services/reasoning/service.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getDb(cwd: string): ReturnType<typeof createClient> | null {
+function getDb(cwd: string) {
   const dbPath = join(cwd, ".codegraph", "structural.db");
-  if (!existsSync(dbPath)) return null;
-  return createClient({ url: "file:" + dbPath });
+  return getStructuralClient(dbPath);
 }
 
 function notIndexedError() {
@@ -250,7 +248,7 @@ export function registerStructuralTools(server: McpServer): void {
           text: JSON.stringify({
             symbol,
             total_affected:    results.length,
-            max_hops_reached:  results.length > 0 ? Math.max(...results.map((r) => r.hop)) : 0,
+            max_hops_reached:  results.reduce((m, r) => r.hop > m ? r.hop : m, 0),
             impact:            results,
             note: results.length === 0
               ? "No callers found — this symbol may be an entry point or is not yet indexed"

@@ -1,6 +1,6 @@
 import { existsSync } from "fs";
 import { join, isAbsolute, resolve } from "path";
-import { createClient } from "@libsql/client";
+import { getStructuralClient } from "../structural/db-cache.js";
 import { sessionsDb } from "../sqlite/db.js";
 
 // ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ export async function checkStaleness(
     };
   }
 
-  const structDb = createClient({ url: `file:${structuralPath}` });
+  const structDb = getStructuralClient(structuralPath)!;
 
   // Load all known symbols from structural.db
   let allSymbols: string[] = [];

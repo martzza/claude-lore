@@ -1,9 +1,7 @@
 import { Router } from "express";
-import { join } from "path";
-import { isAbsolute, resolve } from "path";
-import { existsSync } from "fs";
-import { createClient } from "@libsql/client";
+import { join, isAbsolute, resolve } from "path";
 import { buildIndex, getIndexStats, isIndexStale } from "../services/structural/indexer.js";
+import { getStructuralClient } from "../services/structural/db-cache.js";
 
 const router = Router();
 
@@ -11,10 +9,9 @@ const router = Router();
 // Helper: open structural.db for a given cwd
 // ---------------------------------------------------------------------------
 
-function openDb(cwd: string): ReturnType<typeof createClient> | null {
+function openDb(cwd: string) {
   const dbPath = join(cwd, ".codegraph", "structural.db");
-  if (!existsSync(dbPath)) return null;
-  return createClient({ url: "file:" + dbPath });
+  return getStructuralClient(dbPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +240,7 @@ router.get("/callees", async (req, res) => {
 router.get("/impact", async (req, res) => {
   const symbol  = String(req.query["symbol"] ?? "");
   const cwd     = String(req.query["cwd"]    ?? "");
-  const maxHops = Math.min(parseInt(String(req.query["hops"] ?? "3"), 10), 5);
+  const maxHops = Math.min(Math.max(1, parseInt(String(req.query["hops"] ?? "3"), 10) || 3), 5);
 
   if (!cwd || !isAbsolute(cwd) || resolve(cwd) !== cwd) {
     res.status(400).json({ error: "cwd must be absolute" });
@@ -317,7 +314,7 @@ router.get("/impact", async (req, res) => {
     res.json({
       symbol,
       total_affected:   results.length,
-      max_hops_reached: results.length > 0 ? Math.max(...results.map((r) => r.hop)) : 0,
+      max_hops_reached: results.reduce((m, r) => r.hop > m ? r.hop : m, 0),
       impact:           results,
     });
   } catch (err) {

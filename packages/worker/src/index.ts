@@ -96,6 +96,10 @@ async function main(): Promise<void> {
   });
 }
 
+process.on("unhandledRejection", (err) => {
+  console.error("[worker] unhandledRejection:", err);
+});
+
 main().catch((err) => {
   console.error("Worker startup failed:", err);
   process.exit(1);

@@ -130,10 +130,22 @@ export interface IndexMeta {
 }
 
 // ---------------------------------------------------------------------------
-// buildIndex
+// buildIndex — concurrent write guard
 // ---------------------------------------------------------------------------
 
-export async function buildIndex(repo: string, cwd: string, force = false): Promise<IndexResult> {
+// Prevents two simultaneous buildIndex calls for the same cwd from interleaving
+// DELETE + INSERT and corrupting the structural.db.
+const _buildLocks = new Map<string, Promise<IndexResult>>();
+
+export function buildIndex(repo: string, cwd: string, force = false): Promise<IndexResult> {
+  const inflight = _buildLocks.get(cwd);
+  if (inflight) return inflight;
+  const promise = _runBuildIndex(repo, cwd, force).finally(() => _buildLocks.delete(cwd));
+  _buildLocks.set(cwd, promise);
+  return promise;
+}
+
+async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promise<IndexResult> {
   const startMs = Date.now();
 
   // Path traversal guard
@@ -188,8 +200,8 @@ export async function buildIndex(repo: string, cwd: string, force = false): Prom
     { sql: `DELETE FROM index_meta WHERE repo = ?`, args: [repo] },
   ], "write");
 
-  // Discover files
-  const allFiles = discoverFiles(cwd).filter((f) => SOURCE_EXTS.has(extname(f)));
+  // Discover files (discoverFiles already filters by SOURCE_EXTS)
+  const allFiles = discoverFiles(cwd);
   const files = allFiles.slice(0, 500);
 
   // Collect symbols
@@ -376,7 +388,7 @@ export async function isIndexStale(_repo: string, cwd: string): Promise<boolean>
     const db = createClient({ url: "file:" + dbPath });
     // One structural.db = one repo — take the first row regardless of name
     const res = await db.execute({
-      sql: `SELECT commit_sha FROM index_meta LIMIT 1`,
+      sql: `SELECT commit_sha FROM index_meta LIMIT 1`, /* one structural.db = one repo */
       args: [],
     });
     if (res.rows.length === 0) return true;
@@ -399,7 +411,7 @@ export async function getIndexStats(_repo: string, cwd: string): Promise<IndexMe
     // One structural.db = one repo — take the first (and only) row regardless of name
     const res = await db.execute({
       sql: `SELECT repo, commit_sha, indexed_at, file_count, symbol_count, edge_count
-            FROM index_meta LIMIT 1`,
+            FROM index_meta LIMIT 1`, /* one structural.db = one repo */
       args: [],
     });
     if (res.rows.length === 0) return null;

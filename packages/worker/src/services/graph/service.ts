@@ -1,7 +1,7 @@
 import { sessionsDb, registryDb } from "../sqlite/db.js";
 import { existsSync } from "fs";
 import { join } from "path";
-import { createClient } from "@libsql/client";
+import { getStructuralClient } from "../structural/db-cache.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -290,7 +290,7 @@ export async function buildSymbolImpactGraph(
   const structuralPath = join(repo, ".codegraph", "structural.db");
   if (existsSync(structuralPath)) {
     try {
-      const structDb = createClient({ url: "file:" + structuralPath });
+      const structDb = getStructuralClient(structuralPath)!;
 
       const callersRes = await structDb.execute({
         sql: `SELECT DISTINCT caller, caller_file, weight FROM call_graph WHERE callee = ? LIMIT 20`,
