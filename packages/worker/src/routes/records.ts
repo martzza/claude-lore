@@ -72,11 +72,16 @@ router.post("/confirm", requireScope("write:decisions"), async (req, res) => {
     return;
   }
 
-  // action=dismiss — soft-delete: mark deprecated_by='dismissed', clear pending_review
+  // action=dismiss — soft-delete: mark deprecated_by='dismissed', lifecycle_status='archived', clear pending_review
   if (action === "dismiss") {
     try {
       await sessionsDb.execute({
-        sql: `UPDATE ${table} SET deprecated_by = 'dismissed', deprecated_at = ?, pending_review = 0 WHERE id = ?`,
+        sql: `UPDATE ${table}
+              SET deprecated_by = 'dismissed',
+                  deprecated_at = ?,
+                  lifecycle_status = 'archived',
+                  pending_review = 0
+              WHERE id = ?`,
         args: [Date.now(), id],
       });
       res.json({ ok: true, id, table, action });
@@ -127,9 +132,14 @@ router.post("/confirm", requireScope("write:decisions"), async (req, res) => {
         ],
       });
 
-      // Deprecate the original decision record
+      // Deprecate the original decision record and mark lifecycle as superseded
       await sessionsDb.execute({
-        sql: `UPDATE decisions SET deprecated_by = ?, deprecated_at = ?, pending_review = 0 WHERE id = ?`,
+        sql: `UPDATE decisions
+              SET deprecated_by = ?,
+                  deprecated_at = ?,
+                  lifecycle_status = 'superseded',
+                  pending_review = 0
+              WHERE id = ?`,
         args: [newId, now, id],
       });
 

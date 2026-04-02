@@ -82,6 +82,43 @@ export async function getReasoningData(
 // reasoning_log — write a record with confidence "extracted"
 // ---------------------------------------------------------------------------
 
+export interface SupersessionCandidate {
+  id: string;
+  content: string;
+  symbol: string | null;
+  created_at: number;
+  confidence: string;
+}
+
+/** Returns existing active decisions on the same symbol for MCP supersession prompting. */
+export async function findMcpSupersessionCandidates(
+  repo: string,
+  symbol: string | undefined,
+): Promise<SupersessionCandidate[]> {
+  if (!symbol) return [];
+  const res = await sessionsDb.execute({
+    sql: `SELECT id, content, symbol, created_at, confidence
+          FROM decisions
+          WHERE repo = ?
+            AND symbol = ?
+            AND lifecycle_status = 'active'
+            AND deprecated_by IS NULL
+          ORDER BY created_at DESC
+          LIMIT 5`,
+    args: [repo, symbol],
+  });
+  return res.rows.map((r) => {
+    const row = r as Record<string, unknown>;
+    return {
+      id: String(row["id"]),
+      content: String(row["content"]),
+      symbol: row["symbol"] != null ? String(row["symbol"]) : null,
+      created_at: Number(row["created_at"]),
+      confidence: String(row["confidence"]),
+    };
+  });
+}
+
 export async function logReasoning(
   type: "decision" | "deferred" | "risk",
   content: string,
@@ -89,6 +126,8 @@ export async function logReasoning(
   repo?: string,
   sessionId?: string,
   service?: string,
+  supersedes?: string,
+  amendmentOf?: string,
 ): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
@@ -99,10 +138,23 @@ export async function logReasoning(
   if (type === "decision") {
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO decisions
-              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status, created_at, service, created_by)
-            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?)`,
-      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null, createdBy],
+              (id, repo, session_id, symbol, content, confidence, exported_tier, anchor_status,
+               created_at, service, created_by, supersedes, amendment_of)
+            VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?, ?, ?)`,
+      args: [id, repoVal, sessionVal, symbol ?? null, content, now, service ?? null, createdBy,
+             supersedes ?? null, amendmentOf ?? null],
     });
+    // If this decision supersedes an existing one, update the old record
+    if (supersedes) {
+      await sessionsDb.execute({
+        sql: `UPDATE decisions
+              SET lifecycle_status = 'superseded',
+                  superseded_by = ?,
+                  superseded_at = unixepoch()
+              WHERE id = ? AND repo = ? AND lifecycle_status = 'active'`,
+        args: [id, supersedes, repoVal],
+      });
+    }
   } else if (type === "deferred") {
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO deferred_work
@@ -133,8 +185,13 @@ export async function confirmRecord(id: string, table: string): Promise<void> {
   const email = getGitEmail();
   if (SESSIONS_DB_TABLES.has(table)) {
     await sessionsDb.execute({
-      sql: `UPDATE ${table} SET confidence = 'confirmed', confirmed_by = ? WHERE id = ?`,
-      args: [email, id],
+      sql: `UPDATE ${table}
+            SET confidence = 'confirmed',
+                confirmed_by = ?,
+                last_reviewed_at = unixepoch(),
+                reviewed_by = ?
+            WHERE id = ?`,
+      args: [email, email, id],
     });
   } else if (PERSONAL_DB_TABLES.has(table)) {
     await personalDb.execute({

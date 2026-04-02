@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { readdirSync, readFileSync, statSync, existsSync } from "fs";
 import { join, relative, basename } from "path";
 import { sessionsDb } from "../sqlite/db.js";
+import { parseAdrFrontmatter, adrStatusToLifecycle } from "../adr/service.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,8 @@ export interface ImportedRecord {
   confidence: "inferred";
   exported_tier: "private";
   anchor_status: "healthy";
+  lifecycle_status?: string; // defaults to 'active'; ADRs with Status: Superseded get 'superseded'
+  adr_superseded_by?: string; // raw "Superseded-by" reference from frontmatter
 }
 
 export interface ImportRunOptions {
@@ -486,6 +489,8 @@ function parseAdr(content: string, relPath: string): ImportedRecord[] {
 
   const source = `md:${relPath}:ADR`;
   const fingerprint = makeFingerprint(source, title);
+  const fm = parseAdrFrontmatter(content);
+  const lifecycleStatus = adrStatusToLifecycle(fm.status);
 
   return [
     {
@@ -497,6 +502,8 @@ function parseAdr(content: string, relPath: string): ImportedRecord[] {
       confidence: "inferred",
       exported_tier: "private",
       anchor_status: "healthy",
+      lifecycle_status: lifecycleStatus,
+      adr_superseded_by: fm.supersededBy,
     },
   ];
 }
@@ -566,8 +573,8 @@ async function writeImportedRecord(record: ImportedRecord, repo: string): Promis
     await sessionsDb.execute({
       sql: `INSERT INTO decisions
               (id, repo, session_id, symbol, content, rationale, confidence,
-               exported_tier, anchor_status, source, fingerprint, created_at)
-            VALUES (?, ?, NULL, NULL, ?, ?, 'inferred', 'private', 'healthy', ?, ?, ?)`,
+               exported_tier, anchor_status, source, fingerprint, lifecycle_status, created_at)
+            VALUES (?, ?, NULL, NULL, ?, ?, 'inferred', 'private', 'healthy', ?, ?, ?, ?)`,
       args: [
         id,
         repo,
@@ -575,6 +582,7 @@ async function writeImportedRecord(record: ImportedRecord, repo: string): Promis
         record.rationale ?? null,
         record.source,
         record.fingerprint,
+        record.lifecycle_status ?? "active",
         now,
       ],
     });
