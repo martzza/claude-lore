@@ -43,10 +43,10 @@ Map the user's question to the correct MCP tool sequence before answering:
 | Question type | Tool sequence |
 |---|---|
 | "what did we decide about X" | `reasoning_get(symbol=X, repo)` |
-| "what breaks if I change X" | `codegraph_impact(X, repo)` → `portfolio_impact(X, repo)` |
+| "what breaks if I change X" | `portfolio_impact(X, repo)` — structural code graph (Phase 3+) |
 | "what's deferred on X" | `reasoning_get(symbol=X, repo)` — filter to `deferred_work` type |
 | "what was in progress last session" | `session_load(repo)` → `session_search(query, repo)` |
-| "why does this code look like this" | `reasoning_get(symbol, repo)` + `codegraph_context(task, repo)` |
+| "why does this code look like this" | `reasoning_get(symbol, repo)` + `session_load(repo)` |
 | "what are the cross-repo dependencies" | `portfolio_deps(repo)` → `portfolio_context(task)` |
 | "my personal notes on X" | `personal_get(symbol=X, repo)` |
 | general symbol question | `reasoning_get(symbol, repo)` + `session_load(repo)` |

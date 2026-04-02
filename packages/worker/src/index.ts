@@ -20,6 +20,7 @@ import reviewRouter from "./routes/review.js";
 import syncRouter from "./routes/sync.js";
 import memoryRouter from "./routes/memory.js";
 import auditRouter from "./routes/audit.js";
+import doctorRouter from "./routes/doctor.js";
 
 const PORT = parseInt(process.env["CLAUDE_LORE_PORT"] ?? "37778", 10);
 
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
+      version: "0.9.0",
       port: PORT,
       ts: Date.now(),
       turso: getTursoStatus(),
@@ -61,6 +63,7 @@ async function main(): Promise<void> {
   app.use("/api/sync", syncRouter);
   app.use("/api/memory", memoryRouter);
   app.use("/api/audit", auditRouter);
+  app.use("/api/doctor", doctorRouter);
 
   app.listen(PORT, "127.0.0.1", () => {
     console.log(`claude-lore worker listening on http://127.0.0.1:${PORT}`);

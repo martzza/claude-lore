@@ -1,8 +1,9 @@
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { createInterface } from "readline";
 import { findProjectRoot, ensureWorkerRunning } from "../worker-utils.js";
+import { buildClaudeMdWizard, writeClaudeMd } from "../claude-md.js";
 
 async function prompt(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -138,7 +139,40 @@ export async function runInit(repoPath: string): Promise<void> {
   mergeSettings(settingsPath, buildClaudeHooks(loreRoot));
   console.log("✓ Registered in .claude/settings.json");
 
-  // ── Step 3b: .cursor/ (only if it already exists) ───────────────────────
+  // ── Step 3b: ~/.claude/commands/lore.md ─────────────────────────────────
+  const globalCommandsDir = join(homedir(), ".claude", "commands");
+  mkdirSync(globalCommandsDir, { recursive: true });
+  const loreCommandSrc = join(loreRoot, "plugins", "claude-lore", "commands", "lore.md");
+  const loreCommandDst = join(globalCommandsDir, "lore.md");
+  if (existsSync(loreCommandSrc)) {
+    copyFileSync(loreCommandSrc, loreCommandDst);
+    console.log("✓ Installed /lore command to ~/.claude/commands/lore.md");
+  }
+
+  // ── Step 3c: ~/.claude/settings.json — MCP server (global) ─────────────
+  // The plugin .mcp.json uses ${CLAUDE_PLUGIN_ROOT} which only resolves via
+  // the plugin marketplace. For git-clone installs, register the MCP server
+  // explicitly so /lore MCP tool calls work from day one.
+  const globalClaudeSettingsPath = join(homedir(), ".claude", "settings.json");
+  const mcpEntry = {
+    "claude-lore": {
+      command: "bun",
+      args: ["run", join(loreRoot, "packages/worker/mcp.ts")],
+      env: { CLAUDE_LORE_PORT: "37778" },
+    },
+  };
+  let globalClaudeSettings: Record<string, unknown> = {};
+  if (existsSync(globalClaudeSettingsPath)) {
+    try {
+      globalClaudeSettings = JSON.parse(readFileSync(globalClaudeSettingsPath, "utf8")) as Record<string, unknown>;
+    } catch {}
+  }
+  const existingMcpServers = (globalClaudeSettings["mcpServers"] as Record<string, unknown>) ?? {};
+  globalClaudeSettings["mcpServers"] = { ...existingMcpServers, ...mcpEntry };
+  writeFileSync(globalClaudeSettingsPath, JSON.stringify(globalClaudeSettings, null, 2));
+  console.log("✓ Registered MCP server in ~/.claude/settings.json");
+
+  // ── Step 3c: .cursor/ (only if it already exists) ───────────────────────
   const cursorDir = join(repoPath, ".cursor");
   if (existsSync(cursorDir)) {
     const cursorHooksPath = join(cursorDir, "hooks.json");
@@ -234,13 +268,118 @@ export async function runInit(repoPath: string): Promise<void> {
     console.log("  (No team sync — run 'claude-lore mode set team' to configure)");
   }
 
-  // ── Step 5: Next steps ───────────────────────────────────────────────────
+  // ── Step 5: CLAUDE.md ───────────────────────────────────────────────────
+  const claudeMdPath = join(repoPath, "CLAUDE.md");
+  if (!existsSync(claudeMdPath)) {
+    console.log();
+    console.log("  No CLAUDE.md found in this repo.");
+    console.log("  CLAUDE.md tells Claude about your project conventions and is loaded on every prompt.");
+    const createIt = await prompt("  Build a CLAUDE.md now? [Y/n]: ");
+    if (createIt.toLowerCase() !== "n") {
+      const claudeMdContent = await buildClaudeMdWizard(repoPath, prompt);
+      if (claudeMdContent) writeClaudeMd(claudeMdPath, claudeMdContent);
+    }
+  } else {
+    console.log("✓ CLAUDE.md exists");
+  }
+
+  // ── Step 6: Verification checklist ──────────────────────────────────────
   console.log();
-  console.log(`✓ claude-lore initialised in ${repoPath}`);
+  console.log("Setup verification");
+  console.log("──────────────────");
+
+  const checks: Array<{ label: string; ok: boolean; fix?: string }> = [
+    {
+      label: ".codegraph/config.json",
+      ok: existsSync(join(repoPath, ".codegraph", "config.json")),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: ".claude/settings.json (hooks)",
+      ok: (() => {
+        const p = join(repoPath, ".claude", "settings.json");
+        if (!existsSync(p)) return false;
+        try {
+          const s = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+          return typeof s["hooks"] === "object" && s["hooks"] !== null;
+        } catch { return false; }
+      })(),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: "Hook scripts (context-hook.js)",
+      ok: existsSync(join(loreRoot, "packages", "hooks", "claude-code", "context-hook.js")),
+      fix: "run: pnpm install from the claude-lore directory",
+    },
+    {
+      label: "~/.claude/commands/lore.md",
+      ok: existsSync(join(homedir(), ".claude", "commands", "lore.md")),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: "~/.claude/settings.json (MCP server)",
+      ok: (() => {
+        const p = join(homedir(), ".claude", "settings.json");
+        if (!existsSync(p)) return false;
+        try {
+          const s = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+          const mcp = s["mcpServers"] as Record<string, unknown> | undefined;
+          return typeof mcp === "object" && mcp !== null && "claude-lore" in mcp;
+        } catch { return false; }
+      })(),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: "~/.codegraph/config.json (mode)",
+      ok: (() => {
+        const p = join(homedir(), ".codegraph", "config.json");
+        if (!existsSync(p)) return false;
+        try {
+          const c = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+          return typeof c["mode"] === "string";
+        } catch { return false; }
+      })(),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: "Worker (port 37778)",
+      ok: await (async () => {
+        try {
+          const r = await fetch("http://127.0.0.1:37778/health", { signal: AbortSignal.timeout(2000) });
+          return r.ok;
+        } catch { return false; }
+      })(),
+      fix: "run: claude-lore worker start",
+    },
+    {
+      label: "CLAUDE.md",
+      ok: existsSync(join(repoPath, "CLAUDE.md")),
+      fix: "re-run: claude-lore init  (will offer to create one)",
+    },
+  ];
+
+  let allOk = true;
+  for (const check of checks) {
+    if (check.ok) {
+      console.log(`  ✓  ${check.label}`);
+    } else {
+      console.log(`  ✗  ${check.label}`);
+      if (check.fix) console.log(`       → ${check.fix}`);
+      allOk = false;
+    }
+  }
+
+  // ── Step 7: Next steps ───────────────────────────────────────────────────
   console.log();
-  console.log("Run next:");
-  console.log("  claude-lore bootstrap");
-  console.log();
-  console.log("Store a persistent note:");
-  console.log('  claude-lore remember "<anything claude should always know>"');
+  if (allOk) {
+    console.log(`✓ claude-lore fully initialised in ${repoPath}`);
+    console.log();
+    console.log("Run next:");
+    console.log("  claude-lore bootstrap");
+    console.log();
+    console.log("Store a persistent note:");
+    console.log('  claude-lore remember "<anything claude should always know>"');
+  } else {
+    console.log("✗ Some checks failed — fix the issues above and re-run: claude-lore init");
+  }
 }

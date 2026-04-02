@@ -6,7 +6,7 @@ const program = new Command();
 program
   .name("claude-lore")
   .description("Structural + reasoning knowledge graph for AI coding agents")
-  .version("0.1.0");
+  .version("0.9.0");
 
 // claude-lore init
 program
@@ -475,7 +475,8 @@ program
   .description("Verify everything is wired up correctly")
   .option("--fix", "Apply automatic fixes where safe")
   .option("--json", "Output results as JSON")
-  .action(async (opts: { fix?: boolean; json?: boolean }) => {
+  .option("--watch", "Re-run health checks every 30 seconds")
+  .action(async (opts: { fix?: boolean; json?: boolean; watch?: boolean }) => {
     const { runDoctor } = await import("./commands/doctor.js");
     await runDoctor(opts);
   });

@@ -6,7 +6,7 @@ import {
   type HelpGroup,
 } from "../help.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.9.0";
 const DIVIDER = "─────────────────────────────────────────────────────────────";
 
 function printGroupedHelp(): void {
@@ -32,6 +32,9 @@ function printGroupedHelp(): void {
 
   console.log("REVIEWING KNOWLEDGE");
   console.log("  review            List unconfirmed records — confirm or discard");
+  console.log("  audit             Cross-check bootstrap claims against code reality");
+  console.log("    audit --estimate  Preview cost before running (free, instant)");
+  console.log("    audit --grep-only Run without LLM — no API key required");
   console.log("  status            Current repo state at a glance");
   console.log("  advisor           Workflow and gap suggestions");
   console.log("    advisor gaps      Knowledge gaps needing attention");
@@ -48,7 +51,8 @@ function printGroupedHelp(): void {
   console.log("  /lore parallel       Tasks safe to run in parallel");
   console.log("  /lore status         Current session context summary");
   console.log("  /lore save <text>    Capture a decision or risk now");
-  console.log("  /lore review         Show pending unconfirmed records\n");
+  console.log("  /lore review         Show pending unconfirmed records");
+  console.log("  /lore audit          Review audit gap records inline\n");
 
   console.log("VISUALISING");
   console.log("  graph decisions      Decision hierarchy (Mermaid / interactive D3)");
@@ -81,6 +85,13 @@ function printGroupedHelp(): void {
   console.log("  import               Scan all docs and git history for records");
   console.log("  import --dry-run     Preview what would be imported");
   console.log("  import --file <f>    Import a single file\n");
+
+  console.log("PERSONAL NOTES (cross-repo, injected every session)");
+  console.log("  remember <text>      Store a fact Claude should always know");
+  console.log("  memories             List stored notes");
+  console.log("  memories --tag <t>   Filter by tag");
+  console.log("  forget <id>          Delete a note by short id");
+  console.log("  forget --tag <t>     Delete all notes with a tag\n");
 
   console.log("WORKER & SYSTEM");
   console.log("  worker start         Start the background worker (port 37778)");
