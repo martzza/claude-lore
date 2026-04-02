@@ -21,6 +21,7 @@ export function renderDashboard(summary: DashboardSummary): string {
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>claude-lore dashboard</title>
+<script type="application/json" id="dashboard-data">${dataJson}</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <style>
 :root{
@@ -47,7 +48,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 #graph-controls input[type=text]{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 8px;font-size:12px;width:160px}
 #graph-controls button{background:var(--border);border:none;color:var(--text);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:12px}
 #graph-controls button.active{background:var(--blue);color:#fff}
-#graph{width:100%;height:100%;background:var(--bg)}
+#graph{width:100%;flex:1;min-height:0;background:var(--bg)}
 #detail-panel{width:340px;flex-shrink:0;background:var(--panel);border-left:1px solid var(--border);overflow-y:auto;transform:translateX(340px);transition:transform var(--transition)}
 #detail-panel.open{transform:translateX(0)}
 .dp-header{padding:14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start}
@@ -110,6 +111,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 #tooltip{position:absolute;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-size:11px;pointer-events:none;z-index:150;display:none;max-width:220px}
 .tooltip-name{font-weight:600;margin-bottom:4px}
 .tooltip-meta{color:var(--muted)}
+#legend{position:absolute;bottom:10px;left:10px;background:rgba(26,29,39,.92);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:11px;z-index:120;min-width:180px}
+#legend h5{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}
+.leg-row{display:flex;align-items:center;gap:7px;margin-bottom:5px;color:var(--text)}
+.leg-row:last-child{margin-bottom:0}
+.leg-circle{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+.leg-line{width:20px;height:2px;background:#2d3148;flex-shrink:0}
+.leg-ring{width:14px;height:14px;border-radius:50%;border:2px solid #6366f1;flex-shrink:0;background:transparent}
+.leg-badge{width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;border:1px solid #1a1d27}
 </style>
 </head>
 <body>
@@ -135,6 +144,18 @@ ${updateAvailable ? `<div id="update-banner" style="display:block">Update availa
     </div>
     <svg id="graph"></svg>
     <div id="tooltip"></div>
+    <div id="legend">
+      <h5>Legend</h5>
+      <div class="leg-row"><span class="leg-circle" style="background:#22c55e"></span>Healthy repo</div>
+      <div class="leg-row"><span class="leg-circle" style="background:#f59e0b"></span>Needs attention</div>
+      <div class="leg-row"><span class="leg-circle" style="background:#ef4444"></span>Has issues</div>
+      <div class="leg-row"><span class="leg-circle" style="background:#94a3b8"></span>Initialised</div>
+      <div class="leg-row"><span class="leg-badge"></span>Advisor: healthy</div>
+      <div class="leg-row"><span class="leg-badge" style="background:#f59e0b"></span>Advisor: some gaps</div>
+      <div class="leg-row"><span class="leg-badge" style="background:#ef4444"></span>Advisor: many gaps</div>
+      <div class="leg-row"><span class="leg-ring"></span>Setup progress ring</div>
+      <div class="leg-row"><span class="leg-line"></span>Cross-repo dependency</div>
+    </div>
   </div>
   <div id="detail-panel">
     <div class="dp-header">
@@ -181,7 +202,7 @@ ${updateAvailable ? `<div id="update-banner" style="display:block">Update availa
 </div>
 
 <script>
-const DASHBOARD_DATA = ${dataJson};
+const DASHBOARD_DATA = JSON.parse(document.getElementById('dashboard-data').textContent);
 const WORKER_URL = "${workerUrl}";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -237,9 +258,13 @@ let svgWidth = 0, svgHeight = 0;
 function buildGraph(data) {
   const svg = d3.select('#graph');
   const el = $('graph');
-  svgWidth  = el.clientWidth  || 800;
-  svgHeight = el.clientHeight || 600;
-  svg.attr('width', svgWidth).attr('height', svgHeight);
+  // getBoundingClientRect() is reliable on SVG elements; clientWidth/Height often returns 0
+  const rect = el.getBoundingClientRect();
+  svgWidth  = rect.width  || 800;
+  svgHeight = rect.height || 600;
+  // Do NOT set width/height attributes — CSS flex:1 controls the display size.
+  // Use viewBox so the D3 coordinate space matches the rendered size.
+  svg.attr('viewBox', '0 0 ' + svgWidth + ' ' + svgHeight);
   svg.selectAll('*').remove();
 
   const defs = svg.append('defs');
@@ -589,7 +614,7 @@ function buildDetailHTML(r) {
 }
 
 function actionButton(action, repoPath, label) {
-  return '<button class="action-btn" onclick="runAction(\''+action+'\',\''+escHtml(repoPath)+'\',this)"><span>'+label+'</span><span></span></button>';
+  return '<button class="action-btn" data-action="'+action+'" data-path="'+escHtml(repoPath)+'" onclick="runAction(this.dataset.action,this.dataset.path,this)"><span>'+label+'</span><span></span></button>';
 }
 
 async function runAction(action, repoPath, btn) {
@@ -878,7 +903,11 @@ function updateTopBar(data) {
 
 // ── Wire up ───────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
-  graphRefs = buildGraph(currentData);
+  // Defer graph init by one rAF so flex layout has settled and
+  // clientWidth/clientHeight on the SVG return real values.
+  requestAnimationFrame(() => {
+    graphRefs = buildGraph(currentData);
+  });
   populatePortfolioSelect(currentData);
   updateFeed(currentData);
   renderNotifications();
@@ -931,9 +960,10 @@ window.addEventListener('DOMContentLoaded', () => {
 window.addEventListener('resize', () => {
   if (graphRefs) {
     const el = $('graph');
-    svgWidth  = el.clientWidth;
-    svgHeight = el.clientHeight;
-    d3.select('#graph').attr('width', svgWidth).attr('height', svgHeight);
+    const rect = el.getBoundingClientRect();
+    svgWidth  = rect.width  || svgWidth;
+    svgHeight = rect.height || svgHeight;
+    d3.select('#graph').attr('viewBox', '0 0 ' + svgWidth + ' ' + svgHeight);
     if (simulation) simulation.force('center', d3.forceCenter(svgWidth/2, svgHeight/2)).alpha(0.1).restart();
   }
 });

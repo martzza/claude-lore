@@ -631,9 +631,22 @@ export async function assembleSummary(): Promise<DashboardSummary> {
     });
   }
 
+  // ── 3b. Deduplicate repos by name (prefer absolute path, then more records) ─
+  const _seenNames = new Map<string, RepoSummary>();
+  for (const repo of repoSummaries) {
+    const existing = _seenNames.get(repo.name);
+    if (!existing) { _seenNames.set(repo.name, repo); continue; }
+    const existingAbsolute = existing.path.startsWith("/");
+    const repoAbsolute     = repo.path.startsWith("/");
+    if (!existingAbsolute && repoAbsolute) { _seenNames.set(repo.name, repo); continue; }
+    if (existingAbsolute && !repoAbsolute) continue;
+    if (repo.records.total > existing.records.total) _seenNames.set(repo.name, repo);
+  }
+  const dedupedRepos = [..._seenNames.values()];
+
   // ── 4. Portfolios ─────────────────────────────────────────────────────────
   const portfolioMap = new Map<string, string[]>();
-  for (const repo of repoSummaries) {
+  for (const repo of dedupedRepos) {
     const p = repo.portfolio || "default";
     if (!portfolioMap.has(p)) portfolioMap.set(p, []);
     portfolioMap.get(p)!.push(repo.name);
@@ -643,17 +656,17 @@ export async function assembleSummary(): Promise<DashboardSummary> {
     portfolios.push({ name, repos, repo_count: repos.length });
   }
 
-  const standalone = repoSummaries
+  const standalone = dedupedRepos
     .filter((r) => r.portfolio === "default")
     .map((r) => r.name);
 
   // ── 5. Totals ─────────────────────────────────────────────────────────────
   const totals = {
-    decisions:      repoSummaries.reduce((s, r) => s + r.records.decisions, 0),
-    risks:          repoSummaries.reduce((s, r) => s + r.records.risks, 0),
-    deferred:       repoSummaries.reduce((s, r) => s + r.records.deferred_open, 0),
-    sessions:       repoSummaries.reduce((s, r) => s + r.sessions_total, 0),
-    pending_review: repoSummaries.reduce((s, r) => s + r.records.pending_review, 0),
+    decisions:      dedupedRepos.reduce((s, r) => s + r.records.decisions, 0),
+    risks:          dedupedRepos.reduce((s, r) => s + r.records.risks, 0),
+    deferred:       dedupedRepos.reduce((s, r) => s + r.records.deferred_open, 0),
+    sessions:       dedupedRepos.reduce((s, r) => s + r.sessions_total, 0),
+    pending_review: dedupedRepos.reduce((s, r) => s + r.records.pending_review, 0),
   };
 
   // ── 6. System section ────────────────────────────────────────────────────
@@ -767,7 +780,7 @@ export async function assembleSummary(): Promise<DashboardSummary> {
 
   return {
     generated_at:  now,
-    repos:         repoSummaries,
+    repos:         dedupedRepos,
     portfolios,
     standalone,
     totals,

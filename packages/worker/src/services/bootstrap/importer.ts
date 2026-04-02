@@ -304,35 +304,54 @@ function makeFingerprint(source: string, content: string): string {
 // ─── Decision extraction ──────────────────────────────────────────────────────
 
 const DECISION_HEADING_RE =
-  /why|decision|chose|rationale|approach|strategy|pattern|architecture|design/i;
+  /\b(why|chose|rationale|approach|strategy|trade-?off|design choice|we use|we chose|we picked)\b/i;
+
+// Generic meta-headings that match DECISION_HEADING_RE but contain no real decision
+const DECISION_HEADING_NOISE =
+  /^(key (architectural )?decisions?|related decisions?|decision log|rationale|architecture|design|approach|strategy)$/i;
 
 const DECISION_BODY_SIGNALS = [
   /\bbecause\b/i,
   /\btherefore\b/i,
   /\bchosen\b/i,
   /\bselected\b/i,
-  /\bover\b/i,
   /\binstead of\b/i,
   /\brather than\b/i,
   /\btrade-?off\b/i,
   /\bvs\.?\b/i,
+  /\bwe decided\b/i,
+  /\bwe chose\b/i,
+  /\bover\b.*\bfor\b/i,
 ];
+
+const MIN_BODY_LEN = 80; // anything shorter is a heading-only stub, not a real decision
 
 function extractDecisions(sections: Section[], relPath: string): ImportedRecord[] {
   const records: ImportedRecord[] = [];
 
   for (const sec of sections) {
-    const headingMatch = DECISION_HEADING_RE.test(sec.heading);
+    // Skip generic meta-headings that match the regex but carry no decision content
+    if (DECISION_HEADING_NOISE.test(sec.heading.trim())) continue;
+
     const bodySignals = DECISION_BODY_SIGNALS.filter((re) => re.test(sec.body)).length;
+    const headingMatch = DECISION_HEADING_RE.test(sec.heading);
+
+    // Need either: heading match + body signal, OR ≥2 body signals
+    if (headingMatch && bodySignals < 1) continue;
     if (!headingMatch && bodySignals < 2) continue;
 
+    // Require substantive body — stub sections with no real content add noise
+    if (sec.body.trim().length < MIN_BODY_LEN) continue;
+
     const source = `md:${relPath}:${sec.heading}`;
-    const fingerprint = makeFingerprint(source, sec.heading);
+    // Store the body as the decision content (the actual reasoning), heading as context prefix
+    const body = sec.body.trim().slice(0, 400);
+    const content = `${sec.heading}: ${body}`;
+    const fingerprint = makeFingerprint(source, content);
 
     records.push({
       type: "decision",
-      content: sec.heading,
-      rationale: sec.body.slice(0, 500) || undefined,
+      content,
       source,
       fingerprint,
       confidence: "inferred",
