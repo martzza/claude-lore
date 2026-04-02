@@ -6,7 +6,7 @@ import {
   type HelpGroup,
 } from "../help.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.9.0";
 const DIVIDER = "─────────────────────────────────────────────────────────────";
 
 function printGroupedHelp(): void {

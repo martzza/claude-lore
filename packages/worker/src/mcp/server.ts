@@ -11,7 +11,7 @@ import { registerReviewTools } from "./tools/review.js";
 export function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "claude-lore",
-    version: "0.5.0",
+    version: "0.9.0",
   });
 
   registerReasoningTools(server);
