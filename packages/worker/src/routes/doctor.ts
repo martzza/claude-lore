@@ -11,7 +11,7 @@ const EXPECTED_COLUMNS: Record<string, string[]> = {
   decisions: [
     "id", "repo", "session_id", "symbol", "content", "rationale", "confidence",
     "exported_tier", "anchor_status", "created_at", "confirmed_by", "original_symbol",
-    "anchor_updated_at", "source", "fingerprint", "adr_status", "adr_title",
+    "source", "fingerprint", "adr_status", "adr_title",
     "adr_context", "adr_alternatives", "created_by", "deprecated_by", "deprecated_at",
     "pending_review", "audit_id", "service",
     // Phase 10: lifecycle
