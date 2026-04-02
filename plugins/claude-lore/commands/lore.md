@@ -1,7 +1,7 @@
 ---
 description: Query and write to the claude-lore knowledge graph. Use for /lore questions about decisions, risks, deferred work, session history, and cross-repo dependencies.
 argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol> | review-map | review-diff [--base <ref>] | review-propagation <file> | audit | audit status | audit estimate
-allowed-tools: [Read, Glob, Grep]
+allowed-tools: [Read, Glob, Grep, mcp__claude-lore__reasoning_get, mcp__claude-lore__reasoning_log, mcp__claude-lore__reasoning_pending, mcp__claude-lore__reasoning_confirm, mcp__claude-lore__reasoning_discard, mcp__claude-lore__session_load, mcp__claude-lore__session_search, mcp__claude-lore__personal_log, mcp__claude-lore__personal_get, mcp__claude-lore__portfolio_deps, mcp__claude-lore__portfolio_impact, mcp__claude-lore__get_lore_help, mcp__claude-lore__advisor_summary, mcp__claude-lore__parallelism_check, mcp__claude-lore__workflow_summary, mcp__claude-lore__session_handover, mcp__claude-lore__graph_decisions, mcp__claude-lore__graph_symbol, mcp__claude-lore__graph_portfolio, mcp__claude-lore__annotate_file, mcp__claude-lore__provenance_trace, mcp__claude-lore__annotation_coverage, mcp__claude-lore__review_map, mcp__claude-lore__review_propagation, mcp__claude-lore__review_diff]
 ---
 
 # /lore — Knowledge Graph Interface
@@ -199,17 +199,15 @@ open deferred items, high-confidence decisions, and active risks.
 
 ### /lore bootstrap
 
-Run the bootstrap wizard for the current repo.
-
-Calls `POST /api/bootstrap/run` with the current repo and cwd.
-
-Launches the interactive template wizard. Equivalent to `claude-lore bootstrap` in the
-terminal, but accessible from within Claude Code without leaving the session.
+Bootstrap requires interactive terminal input (template selection, confirmations).
+Run it directly in the terminal — it cannot be driven from within Claude Code.
 
 ```
-/lore bootstrap
-/lore bootstrap --framework owasp-top10
+! claude-lore bootstrap
+! claude-lore bootstrap --framework owasp-top10
 ```
+
+Use `!` to run terminal commands from Claude Code's prompt input.
 
 ---
 

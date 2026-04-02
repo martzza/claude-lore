@@ -271,7 +271,7 @@ claude-lore bootstrap --list                   # list available templates
 
 Exposed via `@modelcontextprotocol/sdk`. Same tools available to Claude Code and Cursor.
 
-### Structural
+### Structural (Phase 3+, not yet implemented)
 - `codegraph_context(task, repo?)` — primary entry point
 - `codegraph_search(query, repo?)` — symbol search
 - `codegraph_callers(symbol, repo?)` — all callers
@@ -287,8 +287,7 @@ Exposed via `@modelcontextprotocol/sdk`. Same tools available to Claude Code and
 - `personal_log(type, content, symbol?, repo?)` — write personal record
 - `personal_get(symbol?, repo?)` — retrieve personal records
 
-### Cross-repo (Phase 3+)
-- `portfolio_context(task)` — cross-repo codegraph_context
+### Cross-repo
 - `portfolio_impact(symbol, repo)` — cross-repo blast radius
 - `portfolio_deps(repo)` — full dependency graph
 

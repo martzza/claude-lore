@@ -3,6 +3,7 @@ import { join } from "path";
 import { homedir } from "os";
 import { createInterface } from "readline";
 import { findProjectRoot, ensureWorkerRunning } from "../worker-utils.js";
+import { buildClaudeMdWizard, writeClaudeMd } from "../claude-md.js";
 
 async function prompt(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -148,6 +149,29 @@ export async function runInit(repoPath: string): Promise<void> {
     console.log("✓ Installed /lore command to ~/.claude/commands/lore.md");
   }
 
+  // ── Step 3c: ~/.claude/settings.json — MCP server (global) ─────────────
+  // The plugin .mcp.json uses ${CLAUDE_PLUGIN_ROOT} which only resolves via
+  // the plugin marketplace. For git-clone installs, register the MCP server
+  // explicitly so /lore MCP tool calls work from day one.
+  const globalClaudeSettingsPath = join(homedir(), ".claude", "settings.json");
+  const mcpEntry = {
+    "claude-lore": {
+      command: "bun",
+      args: ["run", join(loreRoot, "packages/worker/mcp.ts")],
+      env: { CLAUDE_LORE_PORT: "37778" },
+    },
+  };
+  let globalClaudeSettings: Record<string, unknown> = {};
+  if (existsSync(globalClaudeSettingsPath)) {
+    try {
+      globalClaudeSettings = JSON.parse(readFileSync(globalClaudeSettingsPath, "utf8")) as Record<string, unknown>;
+    } catch {}
+  }
+  const existingMcpServers = (globalClaudeSettings["mcpServers"] as Record<string, unknown>) ?? {};
+  globalClaudeSettings["mcpServers"] = { ...existingMcpServers, ...mcpEntry };
+  writeFileSync(globalClaudeSettingsPath, JSON.stringify(globalClaudeSettings, null, 2));
+  console.log("✓ Registered MCP server in ~/.claude/settings.json");
+
   // ── Step 3c: .cursor/ (only if it already exists) ───────────────────────
   const cursorDir = join(repoPath, ".cursor");
   if (existsSync(cursorDir)) {
@@ -250,52 +274,10 @@ export async function runInit(repoPath: string): Promise<void> {
     console.log();
     console.log("  No CLAUDE.md found in this repo.");
     console.log("  CLAUDE.md tells Claude about your project conventions and is loaded on every prompt.");
-    const createIt = await prompt("  Create a starter CLAUDE.md? [y/N]: ");
-    if (createIt.toLowerCase() === "y") {
-      // Try to detect project name from package.json
-      let projectName = repoPath.split("/").pop() ?? "this project";
-      const pkgPath = join(repoPath, "package.json");
-      if (existsSync(pkgPath)) {
-        try {
-          const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as Record<string, unknown>;
-          if (typeof pkg["name"] === "string") projectName = pkg["name"] as string;
-        } catch {}
-      }
-
-      const claudeMdContent = `# ${projectName}
-
-## What this codebase does
-
-[One paragraph — give Claude the 10-second context on what this project is and does]
-
-## Key conventions
-
-- [e.g. always use pnpm over npm]
-- [e.g. TypeScript strict mode throughout, no \`any\`]
-- [e.g. all API responses return \`{ ok: boolean }\` shape]
-
-## What to avoid
-
-- [e.g. never use X library — use Y instead]
-- [e.g. don't add error handling for internal-only code paths]
-
-## claude-lore
-
-This repo uses claude-lore for persistent agent memory. Decisions, risks, and
-deferred work are stored in the knowledge graph and injected at session start.
-
-- \`/lore <question>\` — query decisions, risks, deferred work, session history
-- \`/lore save <text>\` — record a decision or risk inline
-- \`/lore review\` — confirm or discard extracted records
-- \`/lore audit\` — review gap records from the last audit run
-- \`claude-lore review\` — CLI review of pending records
-- \`claude-lore audit --grep-only\` — verify bootstrap accuracy against code
-
-Keep this file lean — every token here is loaded on every prompt.
-Anything already captured in the knowledge graph does not need to be repeated here.
-`;
-      writeFileSync(claudeMdPath, claudeMdContent);
-      console.log("  ✓ Created CLAUDE.md — fill in the placeholder sections before your first session");
+    const createIt = await prompt("  Build a CLAUDE.md now? [Y/n]: ");
+    if (createIt.toLowerCase() !== "n") {
+      const claudeMdContent = await buildClaudeMdWizard(repoPath, prompt);
+      if (claudeMdContent) writeClaudeMd(claudeMdPath, claudeMdContent);
     }
   } else {
     console.log("✓ CLAUDE.md exists");
@@ -332,6 +314,19 @@ Anything already captured in the knowledge graph does not need to be repeated he
     {
       label: "~/.claude/commands/lore.md",
       ok: existsSync(join(homedir(), ".claude", "commands", "lore.md")),
+      fix: "re-run: claude-lore init",
+    },
+    {
+      label: "~/.claude/settings.json (MCP server)",
+      ok: (() => {
+        const p = join(homedir(), ".claude", "settings.json");
+        if (!existsSync(p)) return false;
+        try {
+          const s = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+          const mcp = s["mcpServers"] as Record<string, unknown> | undefined;
+          return typeof mcp === "object" && mcp !== null && "claude-lore" in mcp;
+        } catch { return false; }
+      })(),
       fix: "re-run: claude-lore init",
     },
     {

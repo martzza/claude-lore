@@ -6,6 +6,7 @@ import type { AuditOptions, EstimateResult, ExtractedClaim, GapRecord } from "..
 import { runEstimate } from "../services/audit/cost-estimator.js";
 import { classifyBatch, type ClassifiedClaim } from "../services/audit/record-classifier.js";
 import { verifyBatch, summariseCost, type BatchVerifyResult } from "../services/audit/llm-verifier.js";
+import { buildClaudeMdWizard, writeClaudeMd } from "../claude-md.js";
 
 const PORT = process.env["CLAUDE_LORE_PORT"] ?? "37778";
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -316,7 +317,8 @@ async function reviewGapPage(
 // Full audit flow
 // ---------------------------------------------------------------------------
 
-async function runFullAudit(opts: AuditOptions & { repo: string }): Promise<void> {
+// Returns content snippets from grep-verified records for use as CLAUDE.md hints.
+async function runFullAudit(opts: AuditOptions & { repo: string }): Promise<string[]> {
   const { repo, service, grepOnly = false, dryRun = false, resume } = opts;
   const mode = grepOnly ? "grep_only" : "full";
 
@@ -359,7 +361,7 @@ async function runFullAudit(opts: AuditOptions & { repo: string }): Promise<void
     } else {
       console.log("All records have been processed.\n");
     }
-    return;
+    return [];
   }
 
   console.log(`Classifying ${claims.length} record${claims.length !== 1 ? "s" : ""} via grep...`);
@@ -420,7 +422,7 @@ async function runFullAudit(opts: AuditOptions & { repo: string }): Promise<void
       await completeAuditRun(state.auditId, state.stats);
     }
     deleteState(state.auditId);
-    return;
+    return keptHints(kept);
   }
 
   console.log(`\n${toReview.length} gap candidate${toReview.length !== 1 ? "s" : ""} to review (${PAGE_SIZE} per page)\n`);
@@ -438,7 +440,7 @@ async function runFullAudit(opts: AuditOptions & { repo: string }): Promise<void
 
     if (quit) {
       if (!dryRun) await completeAuditRun(state.auditId, state.stats, "partial");
-      return;
+      return [];
     }
 
     if (done) break;
@@ -458,11 +460,11 @@ async function runFullAudit(opts: AuditOptions & { repo: string }): Promise<void
 
   // Completed
   console.log(`\nAudit complete`);
-  console.log(`  gaps written      ${state.stats.recordsCreated}`);
+  console.log(`  gaps written       ${state.stats.recordsCreated}`);
   console.log(`  records deprecated ${state.stats.recordsDeprecated}`);
 
   if (llmVerified.length > 0) {
-    console.log(`  llm confirmed    ${llmVerified.length}  (ambiguous but code-backed)`);
+    console.log(`  llm confirmed      ${llmVerified.length}  (ambiguous but code-backed)`);
   }
   console.log();
 
@@ -476,11 +478,29 @@ async function runFullAudit(opts: AuditOptions & { repo: string }): Promise<void
     console.log(`  ${state.stats.recordsCreated} gap record${state.stats.recordsCreated !== 1 ? "s" : ""} are pending review.`);
     console.log("  Review them with: claude-lore review\n");
   }
+
+  return keptHints(kept);
+}
+
+// Extract short, human-readable hints from grep-verified records to seed
+// CLAUDE.md convention suggestions.
+function keptHints(kept: ClassifiedClaim[]): string[] {
+  return kept
+    .filter((c) => c.type === "decision" && c.content.length < 120)
+    .slice(0, 5)
+    .map((c) => c.content.trim());
 }
 
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
+
+async function auditPrompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => { rl.close(); resolve(answer.trim()); });
+  });
+}
 
 export async function runAudit(opts: AuditOptions = {}): Promise<void> {
   const repo = opts.repo ?? process.cwd();
@@ -492,5 +512,24 @@ export async function runAudit(opts: AuditOptions = {}): Promise<void> {
   }
 
   await assertWorkerRunning();
-  await runFullAudit({ ...opts, repo });
+  const verifiedHints = await runFullAudit({ ...opts, repo });
+
+  // ── CLAUDE.md step ─────────────────────────────────────────────────────────
+  const claudeMdPath = join(repo, "CLAUDE.md");
+
+  if (!existsSync(claudeMdPath)) {
+    console.log("─────────────────────────────────────────────────────────");
+    console.log("  No CLAUDE.md found.");
+    console.log("  The audit has verified which records are code-backed.");
+    console.log("  Build a CLAUDE.md now using those findings as a starting point?");
+    const answer = await auditPrompt("  [Y/n]: ");
+    if (answer.toLowerCase() !== "n") {
+      const content = await buildClaudeMdWizard(repo, auditPrompt, verifiedHints);
+      if (content) writeClaudeMd(claudeMdPath, content);
+    }
+  } else {
+    // CLAUDE.md exists — nudge toward the advisor check
+    console.log("  CLAUDE.md exists. Run \`/lore improve\` to check for sections that");
+    console.log("  duplicate knowledge graph records (frees up per-session tokens).\n");
+  }
 }

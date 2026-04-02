@@ -1,10 +1,11 @@
 import { createInterface } from "readline";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { classifyClaim } from "../services/audit/cost-estimator.js";
 import { getCommitCount } from "../services/audit/git-historian.js";
 import { readdirSync, statSync } from "fs";
+import { buildClaudeMdWizard, writeClaudeMd } from "../claude-md.js";
 
 const PORT = process.env["CLAUDE_LORE_PORT"] ?? "37778";
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -600,9 +601,22 @@ export async function runBootstrap(opts: {
     console.log();
   }
 
-  // CLAUDE.md suggestions after import (first run only, non-dry-run)
+  // CLAUDE.md — build wizard if missing, suggestions if present (first run only)
   if (isFirstRun && !opts.dryRun) {
-    await showClaudeMdSuggestions(repo, repo, false);
+    const claudeMdPath = join(repo, "CLAUDE.md");
+    if (!existsSync(claudeMdPath)) {
+      console.log("─────────────────────────────────────────────────────────");
+      console.log("  No CLAUDE.md found.");
+      console.log("  Bootstrap has just imported docs and git history.");
+      console.log("  Build a CLAUDE.md now using those findings as a starting point?");
+      const answer = await prompt("[Y/n]: ");
+      if (answer.toLowerCase() !== "n") {
+        const content = await buildClaudeMdWizard(repo, prompt);
+        if (content) writeClaudeMd(claudeMdPath, content);
+      }
+    } else {
+      await showClaudeMdSuggestions(repo, repo, false);
+    }
   }
 
   // Determine which templates to run
