@@ -12,7 +12,7 @@
 //   import { detectService } from "./detect-service.js";
 //   const service = detectService(process.cwd()); // string | null
 
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { join, relative } from "path";
 
@@ -22,7 +22,7 @@ import { join, relative } from "path";
  */
 export function detectService(cwd) {
   try {
-    const gitRoot = execSync("git rev-parse --show-toplevel", {
+    const gitRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       cwd,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],

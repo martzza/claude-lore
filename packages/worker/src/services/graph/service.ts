@@ -1,4 +1,7 @@
 import { sessionsDb, registryDb } from "../sqlite/db.js";
+import { existsSync } from "fs";
+import { join } from "path";
+import { getStructuralClient } from "../structural/db-cache.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -289,6 +292,56 @@ export async function buildSymbolImpactGraph(
     weight: 10,
     status: "healthy",
   });
+
+  // Try to enrich with structural call graph data
+  const structuralPath = join(repo, ".codegraph", "structural.db");
+  if (existsSync(structuralPath)) {
+    try {
+      const structDb = getStructuralClient(structuralPath)!;
+
+      const callersRes = await structDb.execute({
+        sql: `SELECT DISTINCT caller, caller_file, weight FROM call_graph WHERE callee = ? LIMIT 20`,
+        args: [symbol],
+      });
+
+      const calleesRes = await structDb.execute({
+        sql: `SELECT DISTINCT callee, callee_file, weight FROM call_graph WHERE caller = ? LIMIT 20`,
+        args: [symbol],
+      });
+
+      for (const r of callersRes.rows as Row[]) {
+        const caller = String(r["caller"]);
+        const nodeId = `caller:${caller}`;
+        if (!nodes.find((n) => n.id === nodeId)) {
+          nodes.push({
+            id: nodeId,
+            label: caller,
+            type: "symbol",
+            metadata: { file: r["caller_file"] ?? null, kind: "caller", weight: r["weight"] ?? 1 },
+            weight: Math.min(10, Number(r["weight"] ?? 1) * 2),
+            status: "healthy",
+          });
+          edges.push({ from: centerId, to: nodeId, label: "called by", type: "calls", weight: Number(r["weight"] ?? 1) });
+        }
+      }
+
+      for (const r of calleesRes.rows as Row[]) {
+        const callee = String(r["callee"]);
+        const nodeId = `callee:${callee}`;
+        if (!nodes.find((n) => n.id === nodeId)) {
+          nodes.push({
+            id: nodeId,
+            label: callee,
+            type: "symbol",
+            metadata: { file: r["callee_file"] ?? null, kind: "callee", weight: r["weight"] ?? 1 },
+            weight: Math.min(10, Number(r["weight"] ?? 1) * 2),
+            status: "healthy",
+          });
+          edges.push({ from: nodeId, to: centerId, label: "calls", type: "calls", weight: Number(r["weight"] ?? 1) });
+        }
+      }
+    } catch { /* structural.db may be corrupt or schema version mismatch — silently skip */ }
+  }
 
   const [decRes, riskRes, defRes, crossRes] = await Promise.all([
     sessionsDb.execute({

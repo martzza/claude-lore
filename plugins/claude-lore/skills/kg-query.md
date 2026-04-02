@@ -43,7 +43,11 @@ Map the user's question to the correct MCP tool sequence before answering:
 | Question type | Tool sequence |
 |---|---|
 | "what did we decide about X" | `reasoning_get(symbol=X, repo)` |
-| "what breaks if I change X" | `portfolio_impact(X, repo)` — structural code graph (Phase 3+) |
+| "what breaks if I change X" | `codegraph_impact(X, repo)` then `portfolio_impact(X, repo)` for cross-repo |
+| "who calls X / what uses X" | `codegraph_callers(symbol, repo)` |
+| "what does X call / what does X depend on" | `codegraph_callees(symbol, repo)` |
+| "find symbol / search for X" | `codegraph_search(query, repo)` |
+| "context for task / help me work on X" | `codegraph_context(task, repo)` |
 | "what's deferred on X" | `reasoning_get(symbol=X, repo)` — filter to `deferred_work` type |
 | "what was in progress last session" | `session_load(repo)` → `session_search(query, repo)` |
 | "why does this code look like this" | `reasoning_get(symbol, repo)` + `session_load(repo)` |
@@ -77,6 +81,10 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "/lore audit" or "review audit gaps" | `GET /api/records/pending?audit_only=true` — audit gap queue review (see audit skill) |
 | "/lore audit status" | `GET /api/audit/status?repo={cwd}` — last audit run stats |
 | "/lore audit estimate" | Direct to CLI: `claude-lore audit --estimate` — no API call needed |
+
+**If structural index not built** (`codegraph_*` returns `error: structural index not built`):
+→ Fall back to `portfolio_impact` for blast radius
+→ Tell the user: "Run `claude-lore index` to enable symbol-level queries"
 
 When in doubt, start with `reasoning_get` + `session_load` and extend based on what gaps
 appear in the initial results. For broad health or completeness questions, prefer

@@ -1,6 +1,6 @@
 import { existsSync } from "fs";
 import { join, isAbsolute, resolve } from "path";
-import { createClient } from "@libsql/client";
+import { getStructuralClient } from "../structural/db-cache.js";
 import { sessionsDb } from "../sqlite/db.js";
 
 // ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ async function highCallerSymbols(cwd: string): Promise<string[]> {
   if (!isAbsolute(cwd) || resolve(cwd) !== cwd) return [];
   const structuralPath = join(cwd, ".codegraph", "structural.db");
   if (!existsSync(structuralPath)) return [];
-  const db = createClient({ url: `file:${structuralPath}` });
+  const db = getStructuralClient(structuralPath)!;
   try {
     const res = await db.execute({
       sql: `SELECT callee FROM call_graph GROUP BY callee HAVING COUNT(*) >= 5`,

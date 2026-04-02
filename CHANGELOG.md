@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.0] — 2026-04-02
+
+Structural layer complete. All codegraph_* MCP tools now live.
+
+### Added
+- Structural layer indexer: symbol extraction + call graph from TS/JS source
+- 5 new MCP tools: codegraph_search, codegraph_callers, codegraph_callees,
+  codegraph_impact, codegraph_context
+- `claude-lore index` CLI command with progress output and SHA-based skip
+- HTTP endpoints: POST /api/structural/index, GET /api/structural/stats,
+  GET /api/structural/stale, GET /api/structural/search, GET /api/structural/callers,
+  GET /api/structural/callees, GET /api/structural/impact
+- Doctor now checks structural index status (STRUCTURAL section)
+- Graph symbol view enriched with call graph nodes when structural.db exists
+- /health endpoint includes structural.indexed status
+
+### Changed
+- kg-query.md routing table: codegraph_* tools now live, Phase 3+ annotations removed
+- Version bumped from 0.9.0 to 1.0.0
+
+---
+
 ## [0.9.0] — 2026-03-29
 
 Feature-complete reasoning layer. Production-hardened with security audit,

@@ -21,6 +21,8 @@ import syncRouter from "./routes/sync.js";
 import memoryRouter from "./routes/memory.js";
 import auditRouter from "./routes/audit.js";
 import doctorRouter from "./routes/doctor.js";
+import structuralRouter from "./routes/structural.js";
+import { getIndexStats } from "./services/structural/indexer.js";
 
 const PORT = parseInt(process.env["CLAUDE_LORE_PORT"] ?? "37778", 10);
 
@@ -34,15 +36,29 @@ async function main(): Promise<void> {
   // Auth management — exempt from scope checks (bootstrap endpoint)
   app.use("/api/auth", authRouter);
 
-  app.get("/health", (_req, res) => {
+  app.get("/health", async (_req, res) => {
+    let structural: { indexed: boolean; symbol_count?: number; edge_count?: number; indexed_at?: number } = { indexed: false };
+    try {
+      const stats = await getIndexStats(process.cwd(), process.cwd());
+      if (stats) {
+        structural = {
+          indexed:      true,
+          symbol_count: stats.symbol_count,
+          edge_count:   stats.edge_count,
+          indexed_at:   stats.indexed_at,
+        };
+      }
+    } catch { /* ok */ }
+
     res.json({
       status: "ok",
-      version: "0.9.0",
+      version: "1.0.0",
       port: PORT,
       ts: Date.now(),
       turso: getTursoStatus(),
       advisor: { enabled: true, last_run: null },
       graph: { enabled: true },
+      structural,
     });
   });
 
@@ -64,6 +80,7 @@ async function main(): Promise<void> {
   app.use("/api/memory", memoryRouter);
   app.use("/api/audit", auditRouter);
   app.use("/api/doctor", doctorRouter);
+  app.use("/api/structural", structuralRouter);
 
   app.listen(PORT, "127.0.0.1", () => {
     console.log(`claude-lore worker listening on http://127.0.0.1:${PORT}`);
@@ -78,6 +95,10 @@ async function main(): Promise<void> {
     }
   });
 }
+
+process.on("unhandledRejection", (err) => {
+  console.error("[worker] unhandledRejection:", err);
+});
 
 main().catch((err) => {
   console.error("Worker startup failed:", err);

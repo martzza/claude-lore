@@ -559,6 +559,102 @@ function checkHooks(repoRoot: string): CheckResult[] {
   return results;
 }
 
+async function checkStructural(repoRoot: string): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+  const dbPath = join(repoRoot, ".codegraph", "structural.db");
+
+  if (!existsSync(dbPath)) {
+    results.push({
+      label:  "Structural index",
+      status: "warn",
+      detail: "structural.db not found — codegraph_* MCP tools will be unavailable",
+      fix:    "claude-lore index",
+    });
+    return results;
+  }
+
+  // Query stats from the HTTP endpoint if worker is running, otherwise skip detail
+  try {
+    const statsRes = await fetch(
+      `${BASE_URL}/api/structural/stats?cwd=${encodeURIComponent(repoRoot)}&repo=${encodeURIComponent(repoRoot)}`,
+      { signal: AbortSignal.timeout(3000) },
+    );
+    if (statsRes.ok) {
+      const stats = (await statsRes.json()) as Record<string, unknown>;
+      if ((stats as { indexed?: boolean })["indexed"] === false) {
+        results.push({
+          label:  "Structural index",
+          status: "warn",
+          detail: "structural.db exists but has no index_meta — run claude-lore index",
+          fix:    "claude-lore index",
+        });
+        return results;
+      }
+
+      const symbolCount = Number(stats["symbol_count"] ?? 0);
+      const edgeCount   = Number(stats["edge_count"]   ?? 0);
+      const indexedAt   = Number(stats["indexed_at"]   ?? 0);
+      const ageSeconds  = Math.floor(Date.now() / 1000) - indexedAt;
+      const ageDays     = Math.round(ageSeconds / 86400);
+
+      if (symbolCount === 0) {
+        results.push({
+          label:  "Structural index",
+          status: "warn",
+          detail: "Index exists but has no symbols — run claude-lore index --force",
+          fix:    "claude-lore index --force",
+        });
+        return results;
+      }
+
+      if (ageSeconds > 7 * 86400) {
+        results.push({
+          label:  "Structural index",
+          status: "warn",
+          detail: `Index is ${ageDays} days old — consider refreshing (${symbolCount} symbols, ${edgeCount} edges)`,
+          fix:    "claude-lore index",
+        });
+        return results;
+      }
+
+      // Check staleness via git SHA
+      try {
+        const staleRes = await fetch(
+          `${BASE_URL}/api/structural/stale?cwd=${encodeURIComponent(repoRoot)}&repo=${encodeURIComponent(repoRoot)}`,
+          { signal: AbortSignal.timeout(3000) },
+        );
+        if (staleRes.ok) {
+          const staleData = (await staleRes.json()) as { stale?: boolean };
+          if (staleData.stale) {
+            results.push({
+              label:  "Structural index",
+              status: "warn",
+              detail: `Index commit SHA differs from HEAD — ${symbolCount} symbols, ${edgeCount} edges, last indexed ${ageDays}d ago`,
+              fix:    "claude-lore index",
+            });
+            return results;
+          }
+        }
+      } catch {}
+
+      results.push({
+        label:  "Structural index",
+        status: "pass",
+        detail: `${symbolCount} symbols · ${edgeCount} edges · indexed ${ageDays === 0 ? "today" : `${ageDays}d ago`}`,
+      });
+    }
+  } catch {
+    // Worker not running — just check file presence
+    results.push({
+      label:  "Structural index",
+      status: "pass",
+      detail: `structural.db present (start worker for full stats)`,
+    });
+  }
+
+  return results;
+}
+
 function checkCommands(): CheckResult[] {
   const results: CheckResult[] = [];
   const loreMdPath = join(homedir(), ".claude", "commands", "lore.md");
@@ -745,10 +841,11 @@ async function runOnce(repoRoot: string, opts: { fix?: boolean; json?: boolean }
   sections: Array<{ label: string; checks: CheckResult[] }>;
   passed: number; warned: number; failed: number;
 }> {
-  const [workerChecks, sessionChecks, apiKeyChecks] = await Promise.all([
+  const [workerChecks, sessionChecks, apiKeyChecks, structuralChecks] = await Promise.all([
     checkWorker(),
     checkSessions(repoRoot),
     checkApiKeys(),
+    checkStructural(repoRoot),
   ]);
   const runtimeChecks = checkRuntime();
   const hookChecks = checkHooks(repoRoot);
@@ -759,6 +856,7 @@ async function runOnce(repoRoot: string, opts: { fix?: boolean; json?: boolean }
     { label: "RUNTIME",                       checks: runtimeChecks },
     { label: "WORKER",                        checks: workerChecks },
     { label: "SESSIONS",                      checks: sessionChecks },
+    { label: "STRUCTURAL",                    checks: structuralChecks },
     { label: "API KEYS",                      checks: apiKeyChecks },
     { label: `HOOKS — ${repoRoot}`,           checks: hookChecks },
     { label: "COMMANDS",                      checks: commandChecks },

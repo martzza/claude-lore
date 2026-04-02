@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { writeFileSync } from "fs";
-import { join } from "path";
+import { join, isAbsolute, resolve } from "path";
 import { tmpdir } from "os";
 import { buildDepGraph, enrichDepGraph } from "../services/review/deps.js";
 import { getCachedGraph, setCachedGraph, invalidateCache } from "../services/review/cache.js";
@@ -21,6 +21,10 @@ router.get("/deps", async (req, res) => {
 
   if (!repo || !cwd) {
     res.status(400).json({ error: "repo and cwd query params required" });
+    return;
+  }
+  if (!isAbsolute(cwd) || resolve(cwd) !== cwd) {
+    res.status(400).json({ error: "cwd must be an absolute, non-traversal path" });
     return;
   }
 
@@ -70,6 +74,10 @@ router.get("/map", async (req, res) => {
     res.status(400).json({ error: "repo and cwd query params required" });
     return;
   }
+  if (!isAbsolute(cwd) || resolve(cwd) !== cwd) {
+    res.status(400).json({ error: "cwd must be an absolute, non-traversal path" });
+    return;
+  }
 
   try {
     let graph = getCachedGraph(cwd);
@@ -112,6 +120,10 @@ router.get("/propagation", async (req, res) => {
 
   if (!repo || !cwd || !file) {
     res.status(400).json({ error: "repo, cwd, and file query params required" });
+    return;
+  }
+  if (!isAbsolute(cwd) || resolve(cwd) !== cwd) {
+    res.status(400).json({ error: "cwd must be an absolute, non-traversal path" });
     return;
   }
 
@@ -161,6 +173,10 @@ router.get("/diff", async (req, res) => {
     res.status(400).json({ error: "repo and cwd query params required" });
     return;
   }
+  if (!isAbsolute(cwd) || resolve(cwd) !== cwd) {
+    res.status(400).json({ error: "cwd must be an absolute, non-traversal path" });
+    return;
+  }
 
   try {
     if (format === "json") {
@@ -196,6 +212,10 @@ router.post("/invalidate", (req, res) => {
     res.status(400).json({ error: "cwd required" });
     return;
   }
+  if (!isAbsolute(cwd) || resolve(cwd) !== cwd) {
+    res.status(400).json({ error: "cwd must be an absolute, non-traversal path" });
+    return;
+  }
   invalidateCache(cwd);
   res.json({ ok: true });
 });
@@ -214,6 +234,10 @@ router.get("/open", async (req, res) => {
 
   if (!repo || !cwd) {
     res.status(400).json({ error: "repo and cwd query params required" });
+    return;
+  }
+  if (!isAbsolute(cwd) || resolve(cwd) !== cwd) {
+    res.status(400).json({ error: "cwd must be an absolute, non-traversal path" });
     return;
   }
 

@@ -7,11 +7,12 @@ import { registerAdvisorTools } from "./tools/advisor.js";
 import { registerGraphTools } from "./tools/graph.js";
 import { registerAnnotationTools } from "./tools/annotation.js";
 import { registerReviewTools } from "./tools/review.js";
+import { registerStructuralTools } from "./tools/structural.js";
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "claude-lore",
-    version: "0.9.0",
+    version: "1.0.0",
   });
 
   registerReasoningTools(server);
@@ -22,6 +23,7 @@ export function createMcpServer(): McpServer {
   registerGraphTools(server);
   registerAnnotationTools(server);
   registerReviewTools(server);
+  registerStructuralTools(server);
 
   return server;
 }

@@ -6,7 +6,7 @@ const program = new Command();
 program
   .name("claude-lore")
   .description("Structural + reasoning knowledge graph for AI coding agents")
-  .version("0.9.0");
+  .version("1.0.0");
 
 // claude-lore init
 program
@@ -30,6 +30,17 @@ program
   .action(async (opts: { framework?: string; all?: boolean; yes?: boolean; dryRun?: boolean; list?: boolean }) => {
     const { runBootstrap } = await import("./commands/bootstrap.js");
     await runBootstrap(opts);
+  });
+
+// claude-lore index
+program
+  .command("index")
+  .description("Build structural index (symbols + call graph) for this repo")
+  .option("--force", "Force rebuild even if commit SHA is unchanged")
+  .option("--service <name>", "Scope to a specific service/package")
+  .action(async (opts: { force?: boolean; service?: string }) => {
+    const { runIndex } = await import("./commands/index.js");
+    await runIndex(opts);
   });
 
 // claude-lore graph
