@@ -51,7 +51,11 @@ router.get("/", async (_req, res) => {
     });
     const stuckSessions = Number(stuckResult.rows[0]?.["n"] ?? 0);
 
-    res.json({ schema, stuck_sessions: stuckSessions });
+    res.json({
+      schema,
+      stuck_sessions: stuckSessions,
+      dashboard: { url: `http://127.0.0.1:${process.env["CLAUDE_LORE_PORT"] ?? "37778"}/dashboard` },
+    });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

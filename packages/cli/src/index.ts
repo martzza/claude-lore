@@ -489,6 +489,17 @@ program
     await runUpdate();
   });
 
+// claude-lore dashboard
+program
+  .command("dashboard")
+  .description("Open the system dashboard in your browser")
+  .option("--no-open", "Print URL only, do not open browser")
+  .option("--port <port>", "Worker port", "37778")
+  .action(async (opts: { open?: boolean; port?: string }) => {
+    const { runDashboard } = await import("./commands/dashboard.js");
+    await runDashboard({ noOpen: opts.open === false, port: opts.port });
+  });
+
 // claude-lore review-map
 program
   .command("review-map")

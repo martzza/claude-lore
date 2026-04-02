@@ -22,6 +22,7 @@ import memoryRouter from "./routes/memory.js";
 import auditRouter from "./routes/audit.js";
 import doctorRouter from "./routes/doctor.js";
 import structuralRouter from "./routes/structural.js";
+import dashboardRouter from "./routes/dashboard.js";
 import { getIndexStats } from "./services/structural/indexer.js";
 
 const PORT = parseInt(process.env["CLAUDE_LORE_PORT"] ?? "37778", 10);
@@ -59,6 +60,7 @@ async function main(): Promise<void> {
       advisor: { enabled: true, last_run: null },
       graph: { enabled: true },
       structural,
+      dashboard: { url: `http://127.0.0.1:${PORT}/dashboard` },
     });
   });
 
@@ -81,6 +83,9 @@ async function main(): Promise<void> {
   app.use("/api/audit", auditRouter);
   app.use("/api/doctor", doctorRouter);
   app.use("/api/structural", structuralRouter);
+
+  // Dashboard — HTML page + API endpoints (all served from single router)
+  app.use("/", dashboardRouter);
 
   app.listen(PORT, "127.0.0.1", () => {
     console.log(`claude-lore worker listening on http://127.0.0.1:${PORT}`);

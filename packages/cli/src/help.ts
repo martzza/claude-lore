@@ -339,6 +339,28 @@ export const CLI_COMMANDS: CommandHelp[] = [
   },
 
   {
+    name: "dashboard",
+    group: "visualising",
+    summary: "Open the system dashboard in your browser.",
+    description:
+      "Opens a full-page interactive dashboard showing all registered repos, portfolios, lore quality, structural index status, advisor findings, and system health. Uses a D3 force graph to visualise cross-repo relationships. Auto-refreshes every 30 seconds. Requires the worker to be running.",
+    usage: [
+      "claude-lore dashboard",
+      "claude-lore dashboard --no-open",
+      "claude-lore dashboard --port 37778",
+    ],
+    flags: [
+      { flag: "--no-open",    desc: "Print URL without opening browser" },
+      { flag: "--port <port>", desc: "Worker port (default: 37778)" },
+    ],
+    examples: [
+      { command: "claude-lore dashboard",           desc: "Open dashboard in default browser" },
+      { command: "claude-lore dashboard --no-open", desc: "Print dashboard URL without opening" },
+    ],
+    seeAlso: ["graph portfolio", "status", "doctor"],
+  },
+
+  {
     name: "graph decisions",
     group: "visualising",
     summary: "Decision hierarchy graph.",
