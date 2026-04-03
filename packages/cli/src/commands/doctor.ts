@@ -183,6 +183,26 @@ async function checkWorker(): Promise<CheckResult[]> {
   }
   results.push({ label: "Worker running", status: "pass", detail: `http://127.0.0.1:${PORT}` });
 
+  // Dashboard check
+  try {
+    const dashRes = await fetch(`${BASE_URL}/dashboard`, { signal: AbortSignal.timeout(3000) });
+    results.push({
+      label: "Dashboard",
+      status: dashRes.ok ? "pass" : "warn",
+      detail: dashRes.ok
+        ? `http://127.0.0.1:${PORT}/dashboard`
+        : `Dashboard responded with ${dashRes.status}`,
+      fix: dashRes.ok ? undefined : "claude-lore worker restart",
+    });
+  } catch {
+    results.push({
+      label: "Dashboard",
+      status: "warn",
+      detail: `Dashboard not responding — check worker`,
+      fix: "claude-lore worker restart",
+    });
+  }
+
   // MCP tool count via tools/list
   try {
     const mcpTs = join(loreRoot, "packages", "worker", "mcp.ts");

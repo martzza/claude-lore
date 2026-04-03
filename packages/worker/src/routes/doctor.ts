@@ -11,21 +11,31 @@ const EXPECTED_COLUMNS: Record<string, string[]> = {
   decisions: [
     "id", "repo", "session_id", "symbol", "content", "rationale", "confidence",
     "exported_tier", "anchor_status", "created_at", "confirmed_by", "original_symbol",
-    "anchor_updated_at", "source", "fingerprint", "adr_status", "adr_title",
+    "source", "fingerprint", "adr_status", "adr_title",
     "adr_context", "adr_alternatives", "created_by", "deprecated_by", "deprecated_at",
     "pending_review", "audit_id", "service",
+    // Phase 10: lifecycle
+    "lifecycle_status", "last_reviewed_at", "reviewed_by",
+    "supersedes", "superseded_by", "superseded_at", "amendment_of",
   ],
   deferred_work: [
     "id", "repo", "session_id", "symbol", "content", "confidence", "exported_tier",
     "anchor_status", "status", "created_at", "blocked_by", "confirmed_by",
     "original_symbol", "source", "fingerprint", "created_by", "deprecated_by",
     "deprecated_at", "pending_review", "audit_id", "service",
+    // Phase 10: lifecycle
+    "lifecycle_status", "last_reviewed_at", "reviewed_by",
+    "resolved_how", "resolved_note", "touched_by_sessions",
   ],
   risks: [
     "id", "repo", "session_id", "symbol", "content", "confidence", "exported_tier",
     "anchor_status", "created_at", "confirmed_by", "original_symbol", "source",
     "fingerprint", "created_by", "deprecated_by", "deprecated_at", "pending_review",
     "audit_id", "service",
+    // Phase 10: lifecycle
+    "lifecycle_status", "last_reviewed_at", "reviewed_by",
+    "mitigated_at", "mitigation_confirmed_by", "mitigation_note",
+    "accepted_at", "accepted_by", "acceptance_note",
   ],
   skill_manifest: [
     "id", "repo", "skill_name", "file_hash", "created_at", "scope", "updated_at",
@@ -51,7 +61,11 @@ router.get("/", async (_req, res) => {
     });
     const stuckSessions = Number(stuckResult.rows[0]?.["n"] ?? 0);
 
-    res.json({ schema, stuck_sessions: stuckSessions });
+    res.json({
+      schema,
+      stuck_sessions: stuckSessions,
+      dashboard: { url: `http://127.0.0.1:${process.env["CLAUDE_LORE_PORT"] ?? "37778"}/dashboard` },
+    });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

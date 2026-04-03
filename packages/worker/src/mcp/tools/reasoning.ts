@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   getReasoningData,
   logReasoning,
+  findMcpSupersessionCandidates,
   getPendingRecords,
   confirmRecord,
   discardRecord,
@@ -27,7 +28,7 @@ export function registerReasoningTools(server: McpServer): void {
 
   server.tool(
     "reasoning_log",
-    "Write a decision, deferred work item, or risk to the knowledge graph. Confidence is always 'extracted' — only humans can confirm.",
+    "Write a decision, deferred work item, or risk to the knowledge graph. Confidence is always 'extracted' — only humans can confirm. For decisions: if existing decisions exist on the same symbol and no supersedes is provided, returns candidates_found so you can link the supersession chain.",
     {
       type: z
         .enum(["decision", "deferred", "risk"])
@@ -37,14 +38,40 @@ export function registerReasoningTools(server: McpServer): void {
       repo: z.string().optional().describe("Repo path (defaults to cwd)"),
       session_id: z.string().optional().describe("Session ID to associate this record with"),
       service: z.string().optional().describe("Service/package name within a monorepo (e.g. 'api', '@acme/worker', 'packages/auth')"),
+      supersedes: z.string().optional().describe("ID of an existing decision this one replaces. When provided, the old decision is marked superseded and this one is linked to it."),
+      amendment_of: z.string().optional().describe("ID of an existing decision this one partially amends (vs. fully replacing it)."),
     },
-    async ({ type, content, symbol, repo, session_id, service }) => {
-      const id = await logReasoning(type, content, symbol, repo, session_id, service);
+    async ({ type, content, symbol, repo, session_id, service, supersedes, amendment_of }) => {
+      // For decisions without an explicit supersedes link: check for existing decisions
+      // on the same symbol and surface them so the agent can decide whether to link
+      if (type === "decision" && !supersedes && symbol) {
+        const repoVal = repo ?? process.cwd();
+        const candidates = await findMcpSupersessionCandidates(repoVal, symbol);
+        if (candidates.length > 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "candidates_found",
+                  message:
+                    `Found ${candidates.length} existing decision(s) on symbol "${symbol}". ` +
+                    `If this decision replaces one of them, call reasoning_log again with supersedes: "<id>". ` +
+                    `To write without linking, call again with the same args plus supersedes: null.`,
+                  candidates,
+                }),
+              },
+            ],
+          };
+        }
+      }
+
+      const id = await logReasoning(type, content, symbol, repo, session_id, service, supersedes, amendment_of);
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify({ id, type, confidence: "extracted" }),
+            text: JSON.stringify({ id, type, confidence: "extracted", supersedes: supersedes ?? null }),
           },
         ],
       };

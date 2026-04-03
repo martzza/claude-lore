@@ -9,12 +9,54 @@ import { registerAnnotationTools } from "./tools/annotation.js";
 import { registerReviewTools } from "./tools/review.js";
 import { registerStructuralTools } from "./tools/structural.js";
 
+// ---------------------------------------------------------------------------
+// MCP stats — module-level, read by GET /api/mcp/stats
+// ---------------------------------------------------------------------------
+
+interface McpStats {
+  totalCalls:  number;
+  lastCallAt:  number | null;
+  callsToday:  number;
+  toolCount:   number;
+}
+
+const _mcpStats: McpStats = {
+  totalCalls: 0,
+  lastCallAt: null,
+  callsToday: 0,
+  toolCount:  31,
+};
+
+let _todayDate = new Date().toDateString();
+
+export function recordMcpCall(): void {
+  _mcpStats.totalCalls++;
+  _mcpStats.lastCallAt = Date.now();
+  const today = new Date().toDateString();
+  if (today !== _todayDate) {
+    _todayDate = today;
+    _mcpStats.callsToday = 0;
+  }
+  _mcpStats.callsToday++;
+}
+
+export function getMcpStats(): McpStats {
+  return { ..._mcpStats };
+}
+
+// ---------------------------------------------------------------------------
+// Server factory
+// ---------------------------------------------------------------------------
+
 export function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "claude-lore",
     version: "1.0.0",
   });
 
+  // Wrap the server's tool call dispatch to track stats.
+  // McpServer exposes a `tool` registration method; we intercept calls via the
+  // request handler by patching the internal _requestHandlers map after setup.
   registerReasoningTools(server);
   registerSessionTools(server);
   registerPersonalTools(server);
@@ -24,6 +66,22 @@ export function createMcpServer(): McpServer {
   registerAnnotationTools(server);
   registerReviewTools(server);
   registerStructuralTools(server);
+
+  // Patch the tools/call handler to increment counters on every invocation.
+  // The MCP SDK stores request handlers on the underlying Server instance as
+  // _server._requestHandlers (a Map<string, fn>).
+  try {
+    const inner = (server as unknown as { _server: { _requestHandlers: Map<string, unknown> } })._server;
+    if (inner?._requestHandlers) {
+      const orig = inner._requestHandlers.get("tools/call");
+      if (typeof orig === "function") {
+        inner._requestHandlers.set("tools/call", async (...args: unknown[]) => {
+          recordMcpCall();
+          return (orig as (...a: unknown[]) => unknown)(...args);
+        });
+      }
+    }
+  } catch { /* safe — stats are optional */ }
 
   return server;
 }

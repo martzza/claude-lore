@@ -3,6 +3,46 @@ import { randomUUID } from "crypto";
 import { sessionsDb } from "../sqlite/db.js";
 
 // ---------------------------------------------------------------------------
+// ADR frontmatter parsing
+// ---------------------------------------------------------------------------
+
+export interface AdrFrontmatter {
+  status?: string;        // accepted | superseded | deprecated | rejected | proposed | draft
+  supersededBy?: string;  // referenced ADR number / filename from "Superseded-by:" field
+  supersedes?: string;    // referenced ADR from "Supersedes:" field
+  date?: string;
+}
+
+/** Parse lifecycle-relevant frontmatter from an ADR markdown file. */
+export function parseAdrFrontmatter(content: string): AdrFrontmatter {
+  const fm: AdrFrontmatter = {};
+
+  const statusMatch = /^status:\s*(.+)$/im.exec(content);
+  if (statusMatch) fm.status = statusMatch[1]!.trim().toLowerCase();
+
+  // "Superseded-by: ADR-003" or "Superseded by: ADR-003"
+  const supersededByMatch = /^superseded[- ]by:\s*(.+)$/im.exec(content);
+  if (supersededByMatch) fm.supersededBy = supersededByMatch[1]!.trim();
+
+  // "Supersedes: ADR-001"
+  const supersedes = /^supersedes:\s*(.+)$/im.exec(content);
+  if (supersedes) fm.supersedes = supersedes[1]!.trim();
+
+  const dateMatch = /^date:\s*(.+)$/im.exec(content);
+  if (dateMatch) fm.date = dateMatch[1]!.trim();
+
+  return fm;
+}
+
+/** Map ADR frontmatter status to lifecycle_status value. */
+export function adrStatusToLifecycle(status: string | undefined): string {
+  if (!status) return "active";
+  if (status.includes("superseded")) return "superseded";
+  if (status.includes("deprecated") || status.includes("rejected")) return "archived";
+  return "active";
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -57,17 +97,25 @@ export async function createDraftAdr(
   context?: string,
   alternatives?: string,
   sessionId?: string,
+  lifecycleStatus?: string,
+  supersededBy?: string,
 ): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
+  const ls = lifecycleStatus ?? "active";
+  // ADR status: map lifecycle to adr_status (superseded/archived → superseded; else draft)
+  const adrStatus = ls === "active" ? "draft" : "superseded";
+
   await sessionsDb.execute({
     sql: `INSERT OR IGNORE INTO decisions
             (id, repo, session_id, content, rationale, confidence, exported_tier,
-             anchor_status, adr_status, adr_title, adr_context, adr_alternatives, created_at)
-          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', 'draft', ?, ?, ?, ?)`,
+             anchor_status, adr_status, adr_title, adr_context, adr_alternatives,
+             lifecycle_status, superseded_by, created_at)
+          VALUES (?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id, repo, sessionId ?? null, content,
-      rationale ?? null, title, context ?? null, alternatives ?? null, now,
+      rationale ?? null, adrStatus, title, context ?? null, alternatives ?? null,
+      ls, supersededBy ?? null, now,
     ],
   });
   return id;

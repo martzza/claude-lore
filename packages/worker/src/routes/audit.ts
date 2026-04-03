@@ -123,7 +123,7 @@ router.post("/deprecate", requireScope("write:sessions"), async (req, res) => {
       const result = await sessionsDb.execute({
         sql: `UPDATE ${table}
               SET deprecated_by = ?, deprecated_at = ?, audit_id = ?
-              WHERE id = ? AND deprecated_by IS NULL`,
+              WHERE id = ? AND deprecated_by IS NULL AND lifecycle_status = 'active'`,
         args: [deprecated_by, now, audit_id, id],
       });
       updated += result.rowsAffected ?? 0;
@@ -207,7 +207,7 @@ router.post("/write-gap", requireScope("write:sessions"), async (req, res) => {
       const table = tableMap[type];
       await sessionsDb.execute({
         sql: `UPDATE ${table} SET deprecated_by = ?, deprecated_at = ?, audit_id = ?
-              WHERE id = ? AND deprecated_by IS NULL`,
+              WHERE id = ? AND deprecated_by IS NULL AND lifecycle_status = 'active'`,
         args: [id, now, audit_id, replaces],
       });
     }

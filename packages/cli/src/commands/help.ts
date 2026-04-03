@@ -55,6 +55,8 @@ function printGroupedHelp(): void {
   console.log("  /lore audit          Review audit gap records inline\n");
 
   console.log("VISUALISING");
+  console.log("  dashboard            System dashboard — all repos, portfolios, status");
+  console.log("    dashboard --no-open  Print URL without opening browser");
   console.log("  graph decisions      Decision hierarchy (Mermaid / interactive D3)");
   console.log("  graph symbol <name>  Impact map for a symbol");
   console.log("  graph portfolio      Cross-repo dependency map");
