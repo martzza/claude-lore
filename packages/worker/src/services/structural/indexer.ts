@@ -4,6 +4,7 @@ import { createClient } from "@libsql/client";
 import { execFileSync } from "child_process";
 import { randomUUID } from "crypto";
 import { getSymbolLocations } from "../annotation/mapper.js";
+import { checkStalenessForSymbols } from "../staleness/service.js";
 
 // ---------------------------------------------------------------------------
 // File discovery (inline — discoverFiles is not exported from deps.ts)
@@ -90,12 +91,13 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
     },
     {
       sql: `CREATE TABLE IF NOT EXISTS index_meta (
-        repo         TEXT PRIMARY KEY,
-        commit_sha   TEXT,
-        indexed_at   INTEGER NOT NULL DEFAULT (unixepoch()),
-        file_count   INTEGER,
-        symbol_count INTEGER,
-        edge_count   INTEGER
+        repo             TEXT PRIMARY KEY,
+        commit_sha       TEXT,
+        indexed_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+        file_count       INTEGER,
+        symbol_count     INTEGER,
+        edge_count       INTEGER,
+        previous_symbols TEXT DEFAULT '[]'
       )`,
       args: [],
     },
@@ -104,6 +106,15 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
     { sql: `CREATE INDEX IF NOT EXISTS idx_call_graph_caller ON call_graph(caller)`, args: [] },
     { sql: `CREATE INDEX IF NOT EXISTS idx_call_graph_callee ON call_graph(callee)`, args: [] },
   ], "write");
+
+  // Lazy migration: add previous_symbols to existing structural.db instances
+  // that were created before this column was added (CREATE TABLE IF NOT EXISTS
+  // does not alter an already-existing table).
+  try {
+    await db.execute(
+      `ALTER TABLE index_meta ADD COLUMN previous_symbols TEXT DEFAULT '[]'`,
+    );
+  } catch { /* column already exists — safe to ignore */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +203,18 @@ async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promis
       }
     }
   }
+
+  // Read previous symbol set before clearing (for deleted-symbol detection)
+  let previousSymbols: string[] = [];
+  try {
+    const prevMeta = await db.execute({
+      sql: `SELECT previous_symbols FROM index_meta WHERE repo = ?`,
+      args: [repo],
+    });
+    if (prevMeta.rows.length > 0 && prevMeta.rows[0]!["previous_symbols"] != null) {
+      previousSymbols = JSON.parse(String(prevMeta.rows[0]!["previous_symbols"])) as string[];
+    }
+  } catch { /* table may not have column yet */ }
 
   // Clear existing data
   await db.batch([
@@ -351,11 +374,28 @@ async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promis
     );
   }
 
-  // Upsert index_meta
+  // Current symbol names for deletion detection and next-run comparison
+  const currentSymbolNames = symbolEntries.map((s) => s.name);
+
+  // Detect deleted symbols and trigger staleness check for affected reasoning records
+  if (previousSymbols.length > 0) {
+    const currentSet = new Set(currentSymbolNames);
+    const deletedSymbols = previousSymbols.filter((s) => !currentSet.has(s));
+    if (deletedSymbols.length > 0) {
+      console.log(`[claude-lore] ${deletedSymbols.length} symbols deleted — checking reasoning records`);
+      checkStalenessForSymbols(repo, deletedSymbols).catch(() => {});
+    }
+  }
+
+  // Upsert index_meta — store current symbols as previous_symbols for next run
   await db.execute({
-    sql: `INSERT OR REPLACE INTO index_meta (repo, commit_sha, indexed_at, file_count, symbol_count, edge_count)
-          VALUES (?, ?, unixepoch(), ?, ?, ?)`,
-    args: [repo, commitSha, files.length, symbolEntries.length, edgeEntries.length],
+    sql: `INSERT OR REPLACE INTO index_meta
+            (repo, commit_sha, indexed_at, file_count, symbol_count, edge_count, previous_symbols)
+          VALUES (?, ?, unixepoch(), ?, ?, ?, ?)`,
+    args: [
+      repo, commitSha, files.length, symbolEntries.length, edgeEntries.length,
+      JSON.stringify(currentSymbolNames),
+    ],
   });
 
   return {

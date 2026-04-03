@@ -6,7 +6,7 @@ const program = new Command();
 program
   .name("claude-lore")
   .description("Structural + reasoning knowledge graph for AI coding agents")
-  .version("1.0.0");
+  .version("1.1.0");
 
 // claude-lore init
 program

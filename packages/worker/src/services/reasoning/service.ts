@@ -1,6 +1,7 @@
 import { sessionsDb, personalDb } from "../sqlite/db.js";
 import { randomUUID } from "crypto";
 import { getGitEmail } from "../sync/service.js";
+import { STALENESS_THRESHOLDS } from "../../types/lifecycle.js";
 
 // ---------------------------------------------------------------------------
 // Confidence presentation
@@ -75,6 +76,125 @@ export async function getReasoningData(
     decisions: decisionsRes.rows.map((r) => prefixRow(r as Record<string, unknown>)),
     deferred: deferredRes.rows.map((r) => prefixRow(r as Record<string, unknown>)),
     risks: risksRes.rows.map((r) => prefixRow(r as Record<string, unknown>)),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// reasoning_get grouped — 3 lifecycle groups + conflict pairs
+// ---------------------------------------------------------------------------
+
+export interface ConflictPair {
+  symbol: string | null;
+  records: Array<{ id: string; content: string; created_at: number }>;
+}
+
+export interface ReasoningGetGrouped {
+  active: {
+    decisions: Record<string, unknown>[];
+    deferred: Record<string, unknown>[];
+    risks: Record<string, unknown>[];
+  };
+  historical: {
+    decisions: Record<string, unknown>[];
+  };
+  superseded: {
+    decisions: Record<string, unknown>[];
+  };
+  conflicts: ConflictPair[];
+}
+
+export async function getReasoningDataGrouped(
+  symbol?: string,
+  repo?: string,
+  service?: string,
+): Promise<ReasoningGetGrouped> {
+  const baseWhere: string[] = [];
+  const baseArgs: (string | null)[] = [];
+  if (repo) { baseWhere.push("repo = ?"); baseArgs.push(repo); }
+  if (symbol) { baseWhere.push("symbol = ?"); baseArgs.push(symbol); }
+  if (service !== undefined) { baseWhere.push("service IS ?"); baseArgs.push(service ?? null); }
+
+  const baseClause = baseWhere.length > 0 ? ` AND ${baseWhere.join(" AND ")}` : "";
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const decisionThresh = STALENESS_THRESHOLDS["decision"];
+  const riskThresh     = STALENESS_THRESHOLDS["risk"];
+
+  const [activeDecRes, activeDeferRes, activeRiskRes, supersededRes, contestedRes] =
+    await Promise.all([
+      sessionsDb.execute({
+        sql: `SELECT * FROM decisions WHERE lifecycle_status = 'active' AND deprecated_by IS NULL${baseClause} ORDER BY created_at DESC`,
+        args: baseArgs,
+      }),
+      sessionsDb.execute({
+        sql: `SELECT * FROM deferred_work WHERE lifecycle_status = 'active' AND deprecated_by IS NULL AND status = 'open'${baseClause} ORDER BY created_at DESC`,
+        args: baseArgs,
+      }),
+      sessionsDb.execute({
+        sql: `SELECT * FROM risks WHERE lifecycle_status = 'active' AND deprecated_by IS NULL${baseClause} ORDER BY created_at DESC`,
+        args: baseArgs,
+      }),
+      sessionsDb.execute({
+        sql: `SELECT id, symbol, content, created_at, superseded_by, superseded_at FROM decisions WHERE lifecycle_status = 'superseded'${baseClause} ORDER BY superseded_at DESC LIMIT 20`,
+        args: baseArgs,
+      }),
+      sessionsDb.execute({
+        sql: `SELECT id, symbol, content, created_at FROM decisions WHERE confidence = 'contested' AND lifecycle_status = 'active'${baseClause} ORDER BY symbol, created_at DESC`,
+        args: baseArgs,
+      }),
+    ]);
+
+  // Split active decisions into active vs historical by staleness
+  const activeDecisions: Record<string, unknown>[] = [];
+  const historicalDecisions: Record<string, unknown>[] = [];
+  for (const row of activeDecRes.rows) {
+    const r = row as Record<string, unknown>;
+    const createdSec = Number(r["created_at"] ?? 0) / 1000; // stored ms
+    const lastReview = r["last_reviewed_at"] != null ? Number(r["last_reviewed_at"]) : null;
+    const age = nowSec - createdSec;
+    const stale = age > decisionThresh && (lastReview === null || nowSec - lastReview > decisionThresh);
+    (stale ? historicalDecisions : activeDecisions).push(prefixRow(r));
+  }
+
+  // Split active risks — mark unverified ones but keep in active group (risks don't graduate to historical)
+  const activeRisks = activeRiskRes.rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    const createdSec = Number(r["created_at"] ?? 0) / 1000;
+    const lastReview = r["last_reviewed_at"] != null ? Number(r["last_reviewed_at"]) : null;
+    const age = nowSec - createdSec;
+    const unverified = age > riskThresh && (lastReview === null || nowSec - lastReview > riskThresh);
+    return prefixRow({ ...r, unverified });
+  });
+
+  // Group contested records into ConflictPair by symbol
+  const conflictMap = new Map<string | null, Array<{ id: string; content: string; created_at: number }>>();
+  for (const row of contestedRes.rows) {
+    const r = row as Record<string, unknown>;
+    const sym = r["symbol"] != null ? String(r["symbol"]) : null;
+    const key = sym ?? "__no_symbol__";
+    if (!conflictMap.has(key)) conflictMap.set(key, []);
+    conflictMap.get(key)!.push({
+      id: String(r["id"]),
+      content: String(r["content"]),
+      created_at: Number(r["created_at"]),
+    });
+  }
+  const conflicts: ConflictPair[] = [];
+  for (const [key, records] of conflictMap) {
+    if (records.length >= 2) {
+      conflicts.push({ symbol: key === "__no_symbol__" ? null : key, records });
+    }
+  }
+
+  return {
+    active: {
+      decisions: activeDecisions,
+      deferred: activeDeferRes.rows.map((r) => prefixRow(r as Record<string, unknown>)),
+      risks: activeRisks,
+    },
+    historical: { decisions: historicalDecisions },
+    superseded: { decisions: supersededRes.rows as Record<string, unknown>[] },
+    conflicts,
   };
 }
 
@@ -237,6 +357,8 @@ export interface PendingRecord {
   content: string;
   symbol: string | null;
   created_at: number;
+  priority_score: number;
+  group: "audit_queue" | "needs_review";
 }
 
 const TABLE_TO_TYPE: Record<string, string> = {
@@ -246,13 +368,26 @@ const TABLE_TO_TYPE: Record<string, string> = {
   personal_records: "personal",
 };
 
+function pendingPriorityScore(
+  table: string,
+  confidence: string,
+  pendingReview: number,
+): number {
+  let score = 0;
+  if (pendingReview) score += 10;
+  if (confidence === "inferred") score += 3;
+  if (table === "risks") score += 2;
+  else if (table === "decisions") score += 1;
+  return score;
+}
+
 export async function getPendingRecords(repo?: string, service?: string, auditOnly = false): Promise<PendingRecord[]> {
   const where: string[] = ["deprecated_by IS NULL", "lifecycle_status = 'active'"];
 
   if (auditOnly) {
     where.push("pending_review = 1");
   } else {
-    where.push("confidence IN (?, ?)");
+    where.push("(confidence IN (?, ?) OR pending_review = 1)");
   }
 
   const args: (string | null)[] = auditOnly ? [] : ["extracted", "inferred"];
@@ -272,7 +407,7 @@ export async function getPendingRecords(repo?: string, service?: string, auditOn
   const results: PendingRecord[] = [];
   for (const table of tables) {
     const res = await sessionsDb.execute({
-      sql: `SELECT id, repo, service, confidence, content, symbol, created_at
+      sql: `SELECT id, repo, service, confidence, content, symbol, created_at, pending_review
             FROM ${table}
             ${clause}
             ORDER BY created_at DESC`,
@@ -280,21 +415,31 @@ export async function getPendingRecords(repo?: string, service?: string, auditOn
     });
     for (const row of res.rows) {
       const r = row as Record<string, unknown>;
+      const confidence = String(r["confidence"]);
+      const pendingReview = Number(r["pending_review"] ?? 0);
+      const priorityScore = pendingPriorityScore(table, confidence, pendingReview);
       results.push({
         id: String(r["id"]),
         table,
         type: TABLE_TO_TYPE[table] ?? table,
         repo: String(r["repo"]),
         service: r["service"] != null ? String(r["service"]) : null,
-        confidence: String(r["confidence"]),
+        confidence,
         content: String(r["content"]),
         symbol: r["symbol"] != null ? String(r["symbol"]) : null,
         created_at: Number(r["created_at"]),
+        priority_score: priorityScore,
+        group: pendingReview ? "audit_queue" : "needs_review",
       });
     }
   }
 
-  results.sort((a, b) => b.created_at - a.created_at);
+  // Sort: audit_queue first, then by priority_score desc, then recency
+  results.sort((a, b) => {
+    if (a.group !== b.group) return a.group === "audit_queue" ? -1 : 1;
+    if (b.priority_score !== a.priority_score) return b.priority_score - a.priority_score;
+    return b.created_at - a.created_at;
+  });
   return results;
 }
 

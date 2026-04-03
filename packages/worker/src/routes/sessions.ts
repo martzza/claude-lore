@@ -8,6 +8,7 @@ import {
   getSessionStats,
 } from "../services/sessions/service.js";
 import { runCompressionPass } from "../services/compression/service.js";
+import { sessionsDb } from "../services/sqlite/db.js";
 import { warmAdvisorCache } from "../services/context/service.js";
 import { requireScope } from "../middleware/auth.js";
 
@@ -99,6 +100,39 @@ router.get("/first-run", async (req, res) => {
   }
   const isFirstRun = await checkFirstRun(repo);
   res.json({ ok: true, first_run: isFirstRun });
+});
+
+// GET /api/sessions/pending-compression?repo=
+// Returns the oldest session with pending_compression=1 for a given repo.
+// Used by context-hook.js to append a compression directive when Claude next starts.
+router.get("/pending-compression", async (req, res) => {
+  const repo = typeof req.query["repo"] === "string" ? req.query["repo"] : undefined;
+  if (!repo) {
+    res.status(400).json({ error: "repo query param required" });
+    return;
+  }
+  const result = await sessionsDb.execute({
+    sql: `SELECT id, summary, ended_at
+          FROM sessions
+          WHERE repo = ?
+            AND pending_compression = 1
+          ORDER BY ended_at ASC
+          LIMIT 1`,
+    args: [repo],
+  });
+  if (result.rows.length === 0) {
+    res.json({ ok: true, pending: null });
+    return;
+  }
+  const row = result.rows[0] as Record<string, unknown>;
+  res.json({
+    ok: true,
+    pending: {
+      session_id: String(row["id"]),
+      summary: row["summary"] != null ? String(row["summary"]) : null,
+      ended_at: Number(row["ended_at"]),
+    },
+  });
 });
 
 // GET /api/sessions/stats?session_id=&repo=

@@ -158,25 +158,42 @@ export async function checkStaleness(
       }
 
       if (bestMatch) {
+        // Phase 7b: propose re-anchor rather than auto-applying — human must confirm
+        const reanchorNote =
+          `Symbol "${symbol}" may have been renamed to "${bestMatch}" ` +
+          `(Levenshtein distance: ${bestDist}). ` +
+          `Confirm re-anchoring: claude-lore review`;
         await sessionsDb.execute({
           sql: `UPDATE ${table}
-                SET anchor_status = 're-anchored', symbol = ?, original_symbol = ?
+                SET anchor_status = 're-anchored',
+                    original_symbol = ?,
+                    pending_review = 1,
+                    staleness_note = ?
                 WHERE id = ?`,
-          args: [bestMatch, symbol, id],
+          args: [symbol, reanchorNote, id],
+          // Note: symbol field is NOT updated — human must confirm
         });
         counts["re-anchored"]++;
         re_anchored.push({
           id,
           table,
-          symbol: bestMatch,
+          symbol,  // still the original symbol until confirmed
           original_symbol: symbol,
           anchor_status: "re-anchored",
           content,
         });
       } else {
+        // Phase 7a: orphaned records automatically queued for review with explanation
+        const orphanNote =
+          `Anchor symbol "${symbol}" no longer exists in the structural index. ` +
+          `It may have been deleted or renamed. Review: is this record still valid?`;
         await sessionsDb.execute({
-          sql: `UPDATE ${table} SET anchor_status = 'orphaned' WHERE id = ?`,
-          args: [id],
+          sql: `UPDATE ${table}
+                SET anchor_status = 'orphaned',
+                    pending_review = 1,
+                    staleness_note = ?
+                WHERE id = ?`,
+          args: [orphanNote, id],
         });
         counts.orphaned++;
         orphaned.push({ id, table, symbol, anchor_status: "orphaned", content });
@@ -192,6 +209,45 @@ export async function checkStaleness(
     re_anchored,
     checked_at: Date.now(),
   };
+}
+
+/**
+ * Phase 7c — check staleness for a specific set of deleted symbols.
+ * Called immediately after an index rebuild detects removed symbols.
+ * Orphans any records still anchored to those symbols without requiring
+ * a full structural.db to be present (uses the provided deletedSymbols list).
+ */
+export async function checkStalenessForSymbols(
+  repo: string,
+  deletedSymbols: string[],
+): Promise<void> {
+  if (deletedSymbols.length === 0) return;
+  const symbolSet = new Set(deletedSymbols);
+  const tables = ["decisions", "deferred_work", "risks"] as const;
+
+  for (const table of tables) {
+    const res = await sessionsDb.execute({
+      sql: `SELECT id, symbol FROM ${table}
+            WHERE repo = ? AND symbol IS NOT NULL AND anchor_status != 'orphaned'`,
+      args: [repo],
+    });
+    for (const row of res.rows) {
+      const r = row as Record<string, unknown>;
+      const symbol = String(r["symbol"]);
+      if (!symbolSet.has(symbol)) continue;
+      const orphanNote =
+        `Anchor symbol "${symbol}" was deleted from the codebase (detected during index rebuild). ` +
+        `Review: is this record still valid?`;
+      await sessionsDb.execute({
+        sql: `UPDATE ${table}
+              SET anchor_status = 'orphaned',
+                  pending_review = 1,
+                  staleness_note = ?
+              WHERE id = ?`,
+        args: [orphanNote, String(r["id"])],
+      });
+    }
+  }
 }
 
 export async function getStalenessReport(repo: string): Promise<StalenessReport> {

@@ -1,7 +1,7 @@
 ---
 description: Query and write to the claude-lore knowledge graph. Use for /lore questions about decisions, risks, deferred work, session history, and cross-repo dependencies.
-argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol> | review-map | review-diff [--base <ref>] | review-propagation <file> | audit | audit status | audit estimate
-allowed-tools: [Read, Glob, Grep, mcp__claude-lore__reasoning_get, mcp__claude-lore__reasoning_log, mcp__claude-lore__reasoning_pending, mcp__claude-lore__reasoning_confirm, mcp__claude-lore__reasoning_discard, mcp__claude-lore__session_load, mcp__claude-lore__session_search, mcp__claude-lore__personal_log, mcp__claude-lore__personal_get, mcp__claude-lore__portfolio_deps, mcp__claude-lore__portfolio_impact, mcp__claude-lore__get_lore_help, mcp__claude-lore__advisor_summary, mcp__claude-lore__parallelism_check, mcp__claude-lore__workflow_summary, mcp__claude-lore__session_handover, mcp__claude-lore__graph_decisions, mcp__claude-lore__graph_symbol, mcp__claude-lore__graph_portfolio, mcp__claude-lore__annotate_file, mcp__claude-lore__provenance_trace, mcp__claude-lore__annotation_coverage, mcp__claude-lore__review_map, mcp__claude-lore__review_propagation, mcp__claude-lore__review_diff]
+argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol> | review-map | review-diff [--base <ref>] | review-propagation <file> | compress | audit | audit status | audit estimate
+allowed-tools: [Read, Glob, Grep, mcp__claude-lore__reasoning_get, mcp__claude-lore__reasoning_log, mcp__claude-lore__reasoning_pending, mcp__claude-lore__reasoning_confirm, mcp__claude-lore__reasoning_discard, mcp__claude-lore__session_load, mcp__claude-lore__session_search, mcp__claude-lore__personal_log, mcp__claude-lore__personal_get, mcp__claude-lore__portfolio_deps, mcp__claude-lore__portfolio_impact, mcp__claude-lore__get_lore_help, mcp__claude-lore__advisor_summary, mcp__claude-lore__parallelism_check, mcp__claude-lore__workflow_summary, mcp__claude-lore__session_handover, mcp__claude-lore__graph_decisions, mcp__claude-lore__graph_symbol, mcp__claude-lore__graph_portfolio, mcp__claude-lore__annotate_file, mcp__claude-lore__provenance_trace, mcp__claude-lore__annotation_coverage, mcp__claude-lore__review_map, mcp__claude-lore__review_propagation, mcp__claude-lore__review_diff, mcp__claude-lore__compress_session, mcp__claude-lore__submit_compression]
 ---
 
 # /lore — Knowledge Graph Interface
@@ -288,6 +288,23 @@ Calls `review_propagation(repo, cwd, file)` via MCP.
 
 ```
 /lore review-propagation src/services/auth.ts
+```
+
+---
+
+### /lore compress
+
+Run AI compression on the oldest pending session for this repo.
+
+Calls `compress_session(repo)` to fetch pending session observations, then extracts
+decisions, risks, and deferred items from them, and calls `submit_compression` to
+persist the results.
+
+Compression runs automatically at session end using rule-based extraction. Use
+`/lore compress` to upgrade a session with higher-quality AI extraction.
+
+```
+/lore compress
 ```
 
 ---

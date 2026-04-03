@@ -115,20 +115,35 @@ type Row = Record<string, unknown>;
 
 // ─── buildDecisionHierarchy ───────────────────────────────────────────────────
 
-export async function buildDecisionHierarchy(repo: string): Promise<GraphData> {
+export type LifecycleFilter = "active" | "include_historical" | "full_history";
+
+export async function buildDecisionHierarchy(
+  repo: string,
+  lifecycleFilter: LifecycleFilter = "active",
+): Promise<GraphData> {
+  // Build lifecycle WHERE clause based on filter
+  const decLifecycleClause =
+    lifecycleFilter === "active"
+      ? `AND lifecycle_status = 'active'`
+      : lifecycleFilter === "include_historical"
+      ? `AND lifecycle_status IN ('active')`  // historical = active but stale — same rows, labelled differently
+      : `AND lifecycle_status IN ('active', 'superseded')`;  // full_history
+
   const [decRes, riskRes, defRes] = await Promise.all([
     sessionsDb.execute({
-      sql: `SELECT id, symbol, content, rationale, confidence, anchor_status, adr_status
-            FROM decisions WHERE repo = ?`,
+      sql: `SELECT id, symbol, content, rationale, confidence, anchor_status, adr_status,
+                   lifecycle_status, supersedes, superseded_by, created_at, last_reviewed_at
+            FROM decisions WHERE repo = ? ${decLifecycleClause}`,
       args: [repo],
     }),
     sessionsDb.execute({
-      sql: `SELECT id, symbol, content, confidence, anchor_status FROM risks WHERE repo = ?`,
+      sql: `SELECT id, symbol, content, confidence, anchor_status, lifecycle_status
+            FROM risks WHERE repo = ? AND lifecycle_status = 'active'`,
       args: [repo],
     }),
     sessionsDb.execute({
-      sql: `SELECT id, symbol, content, confidence, anchor_status, blocked_by
-            FROM deferred_work WHERE repo = ? AND status = 'open'`,
+      sql: `SELECT id, symbol, content, confidence, anchor_status, blocked_by, lifecycle_status
+            FROM deferred_work WHERE repo = ? AND status = 'open' AND lifecycle_status = 'active'`,
       args: [repo],
     }),
   ]);
@@ -141,12 +156,29 @@ export async function buildDecisionHierarchy(repo: string): Promise<GraphData> {
   const edges: GraphEdge[] = [];
 
   // Decision nodes
+  const nowSec = Math.floor(Date.now() / 1000);
+  const decStaleThresh = 180 * 24 * 60 * 60;
   for (const d of decisions) {
     const conf = String(d["confidence"] ?? "inferred");
+    const lifecycleStatus = String(d["lifecycle_status"] ?? "active");
     const content = String(d["content"] ?? "decision");
+    const createdSec = Number(d["created_at"] ?? 0) / 1000;
+    const lastReview = d["last_reviewed_at"] != null ? Number(d["last_reviewed_at"]) : null;
+    const isHistoricalNode =
+      lifecycleStatus === "active" &&
+      nowSec - createdSec > decStaleThresh &&
+      (lastReview === null || nowSec - lastReview > decStaleThresh);
+
+    const labelPrefix =
+      lifecycleStatus === "superseded"
+        ? "[superseded] "
+        : isHistoricalNode
+        ? "[historical] "
+        : "";
+
     nodes.push({
       id: String(d["id"]),
-      label: shortLabel(content),
+      label: shortLabel(labelPrefix + content),
       type: "decision",
       metadata: {
         content,
@@ -154,8 +186,12 @@ export async function buildDecisionHierarchy(repo: string): Promise<GraphData> {
         rationale: d["rationale"] ?? null,
         confidence: conf,
         adr_status: d["adr_status"] ?? null,
+        lifecycle_status: lifecycleStatus,
+        is_historical: isHistoricalNode,
+        supersedes: d["supersedes"] ?? null,
+        superseded_by: d["superseded_by"] ?? null,
       },
-      weight: confidenceWeight(conf),
+      weight: lifecycleStatus === "superseded" ? 2 : confidenceWeight(conf),
       status: nodeStatus(conf, String(d["anchor_status"] ?? "healthy")),
     });
   }
@@ -208,7 +244,15 @@ export async function buildDecisionHierarchy(repo: string): Promise<GraphData> {
     }
   }
 
-  // Edges: decision → decision "constrains" / "supersedes"
+  // Edges: decision → decision "supersedes" (explicit FK) / "constrains" (heuristic)
+  const decisionIds = new Set(decisions.map((d) => String(d["id"])));
+  for (const d of decisions) {
+    const supersedesId = d["supersedes"] != null ? String(d["supersedes"]) : null;
+    if (supersedesId && decisionIds.has(supersedesId)) {
+      edges.push({ from: String(d["id"]), to: supersedesId, label: "supersedes", type: "supersedes", weight: 10 });
+    }
+  }
+  // Keyword-based constrains edges between decisions that don't have an explicit FK
   for (let i = 0; i < decisions.length; i++) {
     for (let j = i + 1; j < decisions.length; j++) {
       const a = decisions[i]!;
@@ -217,10 +261,13 @@ export async function buildDecisionHierarchy(repo: string): Promise<GraphData> {
       const bs = b["symbol"] as string | null;
       const ac = String(a["content"] ?? "");
       const bc = String(b["content"] ?? "") + " " + String(b["rationale"] ?? "");
+      // Skip pairs already linked by supersedes FK
+      if (
+        (a["supersedes"] != null && String(a["supersedes"]) === String(b["id"])) ||
+        (b["supersedes"] != null && String(b["supersedes"]) === String(a["id"]))
+      ) continue;
 
-      if (String(b["adr_status"]) === "superseded" && as_ && bs && as_ === bs) {
-        edges.push({ from: String(a["id"]), to: String(b["id"]), label: "supersedes", type: "supersedes", weight: 10 });
-      } else if (as_ && bs && as_ === bs && as_ !== "") {
+      if (as_ && bs && as_ === bs && as_ !== "") {
         edges.push({ from: String(a["id"]), to: String(b["id"]), label: "constrains", type: "constrains", weight: 6 });
       } else if (keywordOverlap(ac, bc) >= 2) {
         edges.push({ from: String(a["id"]), to: String(b["id"]), label: "constrains", type: "constrains", weight: 3 });
@@ -272,6 +319,7 @@ export async function buildDecisionHierarchy(repo: string): Promise<GraphData> {
 export async function buildSymbolImpactGraph(
   symbol: string,
   repo: string,
+  lifecycleFilter: LifecycleFilter = "active",
 ): Promise<GraphData> {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
@@ -336,23 +384,31 @@ export async function buildSymbolImpactGraph(
     } catch { /* structural.db may be corrupt or schema version mismatch — silently skip */ }
   }
 
+  const decLifecycleClause =
+    lifecycleFilter === "full_history"
+      ? `AND lifecycle_status IN ('active', 'superseded')`
+      : `AND lifecycle_status = 'active'`;
+
   const [decRes, riskRes, defRes, crossRes] = await Promise.all([
     sessionsDb.execute({
-      sql: `SELECT id, content, confidence, anchor_status FROM decisions WHERE repo = ? AND symbol = ?`,
+      sql: `SELECT id, content, confidence, anchor_status, lifecycle_status FROM decisions
+            WHERE repo = ? AND symbol = ? ${decLifecycleClause}`,
       args: [repo, symbol],
     }),
     sessionsDb.execute({
-      sql: `SELECT id, content, confidence, anchor_status FROM risks WHERE repo = ? AND symbol = ?`,
+      sql: `SELECT id, content, confidence, anchor_status FROM risks WHERE repo = ? AND symbol = ?
+            AND lifecycle_status = 'active'`,
       args: [repo, symbol],
     }),
     sessionsDb.execute({
       sql: `SELECT id, content, confidence, anchor_status FROM deferred_work
-            WHERE repo = ? AND symbol = ? AND status = 'open'`,
+            WHERE repo = ? AND symbol = ? AND status = 'open' AND lifecycle_status = 'active'`,
       args: [repo, symbol],
     }),
     registryDb.execute({
       sql: `SELECT DISTINCT repo, tier FROM cross_repo_index
             WHERE (symbol = ? OR symbol LIKE ?) AND repo != ?
+              AND (lifecycle_status IS NULL OR lifecycle_status = 'active')
             ORDER BY indexed_at DESC LIMIT 10`,
       args: [symbol, `${symbol}.%`, repo],
     }),

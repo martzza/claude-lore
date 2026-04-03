@@ -17,6 +17,7 @@ export interface AnnotationRecord {
   summary: string;   // short version for inline display
   full: string;      // full content for expand-on-click
   confidence: string;
+  lifecycle_status: string;  // active | superseded | historical | archived | mitigated | accepted
   severity?: string; // for risks
   session_id?: string;
   chain: string[];   // record IDs in provenance chain, oldest first
@@ -193,6 +194,7 @@ export async function getAnnotationsForFile(
         summary: extractSummary(String(d["content"] ?? "")),
         full: String(d["content"] ?? ""),
         confidence: String(d["confidence"] ?? "extracted"),
+        lifecycle_status: String(d["lifecycle_status"] ?? "active"),
         session_id: d["session_id"] != null ? String(d["session_id"]) : undefined,
         chain,
       });
@@ -207,6 +209,7 @@ export async function getAnnotationsForFile(
         summary: extractSummary(String(r["content"] ?? "")),
         full: String(r["content"] ?? ""),
         confidence: String(r["confidence"] ?? "extracted"),
+        lifecycle_status: String(r["lifecycle_status"] ?? "active"),
         severity: extractSeverity(String(r["content"] ?? "")),
         session_id: r["session_id"] != null ? String(r["session_id"]) : undefined,
         chain,
@@ -222,6 +225,7 @@ export async function getAnnotationsForFile(
         summary: extractSummary(String(dw["content"] ?? "")),
         full: String(dw["content"] ?? ""),
         confidence: String(dw["confidence"] ?? "extracted"),
+        lifecycle_status: String(dw["lifecycle_status"] ?? "active"),
         session_id: dw["session_id"] != null ? String(dw["session_id"]) : undefined,
         chain,
       });
@@ -238,6 +242,7 @@ export async function getAnnotationsForFile(
         summary: summary.length > 120 ? summary.slice(0, 117) + "..." : summary,
         full: summary,
         confidence: "extracted",
+        lifecycle_status: "active",
         chain: [],
       });
     }

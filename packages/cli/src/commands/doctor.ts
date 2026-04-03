@@ -369,44 +369,33 @@ async function checkApiKeys(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
   const loreRoot = findClaudeLoreRoot();
 
-  // ANTHROPIC_API_KEY — validate with models list endpoint
-  const apiKey = process.env["ANTHROPIC_API_KEY"];
-  if (!apiKey) {
-    results.push({
-      label: "ANTHROPIC_API_KEY",
-      status: "warn",
-      detail: "Not set — AI compression will be skipped at every Stop hook",
-      fix: "export ANTHROPIC_API_KEY=sk-ant-...  (add to shell profile)",
-    });
-  } else {
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/models", {
-        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.status === 401) {
+  // Compression mode — check pending session count via worker
+  try {
+    const repo = findRepoRoot();
+    const res = await fetch(
+      `http://127.0.0.1:${PORT}/api/sessions/pending-compression?repo=${encodeURIComponent(repo)}`,
+      { signal: AbortSignal.timeout(3000) },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as Record<string, unknown>;
+      const pending = data["pending"];
+      if (pending) {
         results.push({
-          label: "ANTHROPIC_API_KEY",
-          status: "fail",
-          detail: "Set but invalid (401) — compression will fail silently",
-          fix: "Check key at https://console.anthropic.com/settings/keys",
+          label: "Compression",
+          status: "warn",
+          detail: "1 session pending AI compression — run compress_session MCP tool or /lore compress",
+          fix: "/lore compress",
         });
-      } else if (res.ok) {
-        results.push({ label: "ANTHROPIC_API_KEY", status: "pass", detail: "Valid and reachable" });
       } else {
         results.push({
-          label: "ANTHROPIC_API_KEY",
-          status: "warn",
-          detail: `Anthropic API returned ${res.status} — check connectivity`,
+          label: "Compression",
+          status: "pass",
+          detail: "MCP-based compression active — no sessions pending",
         });
       }
-    } catch {
-      results.push({
-        label: "ANTHROPIC_API_KEY",
-        status: "warn",
-        detail: "Set but Anthropic API unreachable — check network connectivity",
-      });
     }
+  } catch {
+    // Worker not running — skip this check, reported elsewhere
   }
 
   // Turso (team mode)

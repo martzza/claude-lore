@@ -14,15 +14,23 @@ export type GapType =
   | "stale_deferred"
   | "undocumented_symbol"
   | "missing_skill"
-  | "undocumented_hierarchy";
+  | "undocumented_hierarchy"
+  | "zombie_deferred"
+  | "supersession_conflict"
+  | "unreviewed_template_records"
+  | "unresolved_conflict";
 
 export interface KnowledgeGap {
   type: GapType;
   description: string;
   symbol?: string;
   record_id?: string;
+  record_ids?: string[];
   score: number;       // contribution to total_gap_score
   age_days?: number;
+  capture_hint?: string;
+  estimated_effort?: string;
+  zombie_sessions?: number;
 }
 
 export interface GapAdvisory {
@@ -40,7 +48,10 @@ export interface GapAdvisory {
 const MS_PER_DAY = 86_400_000;
 
 function ageDays(created_at: number): number {
-  return Math.floor((Date.now() - created_at) / MS_PER_DAY);
+  // created_at stored as ms in some tables, as unix seconds in others
+  // Values < 1e10 are unix seconds; values >= 1e10 are milliseconds
+  const ms = created_at < 1e10 ? created_at * 1000 : created_at;
+  return Math.floor((Date.now() - ms) / MS_PER_DAY);
 }
 
 async function highCallerSymbols(cwd: string): Promise<string[]> {
@@ -57,6 +68,23 @@ async function highCallerSymbols(cwd: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/** Token Jaccard similarity for supersession conflict detection */
+function tokenSimilarity(a: string, b: string): number {
+  const tokenize = (s: string) =>
+    new Set(
+      s.toLowerCase()
+        .split(/\W+/)
+        .filter((w) => w.length >= 4),
+    );
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  if (ta.size === 0 && tb.size === 0) return 1;
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let intersection = 0;
+  for (const t of ta) if (tb.has(t)) intersection++;
+  return intersection / (ta.size + tb.size - intersection);
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +116,8 @@ export async function analyseKnowledgeGaps(
         description: `Symbol \`${sym}\` has 5+ callers but no confirmed decision documenting its contract.`,
         symbol: sym,
         score: 15,
+        capture_hint: `Run: /lore log decision  OR  claude-lore advisor gaps`,
+        estimated_effort: "minutes",
       });
     }
   }
@@ -108,6 +138,8 @@ export async function analyseKnowledgeGaps(
         record_id: String(r["id"]),
         score: 8,
         age_days: ageDays(Number(r["created_at"] ?? 0)),
+        capture_hint: `Run: claude-lore review`,
+        estimated_effort: "minutes",
       });
     }
   }
@@ -129,6 +161,8 @@ export async function analyseKnowledgeGaps(
       record_id: String(r["id"]),
       score: age > 30 ? 12 : 7,
       age_days: age,
+      capture_hint: `Run: claude-lore review`,
+      estimated_effort: "minutes",
     });
   }
 
@@ -151,6 +185,8 @@ export async function analyseKnowledgeGaps(
       record_id: String(r["id"]),
       score: age > 30 ? 10 : 5,
       age_days: age,
+      capture_hint: `Run: claude-lore review`,
+      estimated_effort: "minutes",
     });
   }
 
@@ -171,6 +207,8 @@ export async function analyseKnowledgeGaps(
           description: `Symbol \`${sym}\` has 5+ callers and zero knowledge records.`,
           symbol: sym,
           score: 10,
+          capture_hint: `Run: /lore log decision`,
+          estimated_effort: "minutes",
         });
       }
     }
@@ -185,7 +223,6 @@ export async function analyseKnowledgeGaps(
     skillRes.rows.map((r) => String((r as Record<string, unknown>)["skill_name"]).toLowerCase()),
   );
 
-  // Find symbols appearing in many sessions
   const sessionSymbolRes = await sessionsDb.execute({
     sql: `SELECT d.symbol, COUNT(DISTINCT d.session_id) as session_count
           FROM decisions d
@@ -197,7 +234,6 @@ export async function analyseKnowledgeGaps(
   for (const row of sessionSymbolRes.rows) {
     const r = row as Record<string, unknown>;
     const sym = String(r["symbol"]);
-    // Skill is considered covering this symbol if any skill name includes the symbol name
     const covered = Array.from(skillNames).some((name) =>
       name.includes(sym.toLowerCase()) || sym.toLowerCase().includes(name),
     );
@@ -217,7 +253,6 @@ export async function analyseKnowledgeGaps(
     args: [repo],
   });
   if (allDecisions.rows.length > 1) {
-    // Build a simple adjacency check: decisions that share a symbol with another record
     const symbolCount = new Map<string, number>();
     for (const row of allDecisions.rows) {
       const sym = String((row as Record<string, unknown>)["symbol"] ?? "");
@@ -226,7 +261,6 @@ export async function analyseKnowledgeGaps(
     for (const row of allDecisions.rows) {
       const r = row as Record<string, unknown>;
       const sym = String(r["symbol"] ?? "");
-      // Isolated: no symbol, or symbol appears only once (no other record shares it)
       if (!sym || (symbolCount.get(sym) ?? 0) <= 1) {
         gaps.push({
           type: "undocumented_hierarchy",
@@ -237,6 +271,156 @@ export async function analyseKnowledgeGaps(
         });
       }
     }
+  }
+
+  // 8. zombie_deferred — open deferred items whose anchor symbol was touched in ≥2 sessions
+  const zombieRes = await sessionsDb.execute({
+    sql: `SELECT id, symbol, content, created_at, blocked_by, touched_by_sessions
+          FROM deferred_work
+          WHERE repo = ?
+            AND lifecycle_status = 'active'
+            AND resolved_at IS NULL
+            AND json_array_length(touched_by_sessions) >= 2
+          ORDER BY json_array_length(touched_by_sessions) DESC
+          LIMIT 10`,
+    args: [repo],
+  });
+
+  for (const row of zombieRes.rows) {
+    const r = row as Record<string, unknown>;
+    let sessionCount = 0;
+    try {
+      sessionCount = (JSON.parse(String(r["touched_by_sessions"] ?? "[]")) as unknown[]).length;
+    } catch {}
+    const createdMs = Number(r["created_at"] ?? 0);
+    const ageDaysVal = ageDays(createdMs);
+    const content = String(r["content"] ?? "");
+
+    gaps.push({
+      type: "zombie_deferred",
+      symbol: r["symbol"] != null ? String(r["symbol"]) : undefined,
+      description:
+        `Deferred item "${content.slice(0, 60)}" was created ${ageDaysVal} days ago and its ` +
+        `anchor symbol was touched in ${sessionCount} sessions — was this completed?`,
+      capture_hint: `Run: claude-lore review`,
+      estimated_effort: "minutes",
+      record_id: String(r["id"]),
+      zombie_sessions: sessionCount,
+      score: sessionCount >= 3 ? 12 : 8,
+      age_days: ageDaysVal,
+    });
+  }
+
+  // 9. supersession_conflict — active decisions on the same symbol without a supersedes link
+  const activeDecRes = await sessionsDb.execute({
+    sql: `SELECT id, symbol, content, confidence, created_at
+          FROM decisions
+          WHERE repo = ?
+            AND lifecycle_status = 'active'
+            AND supersedes IS NULL
+            AND superseded_by IS NULL
+          ORDER BY created_at DESC`,
+    args: [repo],
+  });
+
+  const decRows = activeDecRes.rows as Record<string, unknown>[];
+  const conflictPairs: Array<{ a: Record<string, unknown>; b: Record<string, unknown>; score: number }> = [];
+
+  for (let i = 0; i < decRows.length; i++) {
+    for (let j = i + 1; j < decRows.length; j++) {
+      const a = decRows[i]!;
+      const b = decRows[j]!;
+      if (!a["symbol"] || !b["symbol"] || a["symbol"] !== b["symbol"]) continue;
+      const sim = tokenSimilarity(String(a["content"] ?? ""), String(b["content"] ?? ""));
+      if (sim > 0.35 && sim < 0.85) {
+        conflictPairs.push({ a, b, score: sim });
+      }
+    }
+  }
+
+  for (const { a, b } of conflictPairs.slice(0, 5)) {
+    gaps.push({
+      type: "supersession_conflict",
+      symbol: String(a["symbol"]),
+      description:
+        `Two active decisions may conflict on symbol "${String(a["symbol"])}": ` +
+        `"${String(a["content"]).slice(0, 50)}" and "${String(b["content"]).slice(0, 50)}"`,
+      capture_hint:
+        `Run claude-lore review or use reasoning_review to link the supersession chain`,
+      estimated_effort: "minutes",
+      record_ids: [String(a["id"]), String(b["id"])],
+      score: 14,
+    });
+  }
+
+  // 10. unreviewed_template_records — bootstrap template records never reviewed after 30 days
+  const templateRes = await sessionsDb.execute({
+    sql: `SELECT COUNT(*) as c, MIN(created_at) as oldest
+          FROM (
+            SELECT created_at FROM decisions
+            WHERE repo = ? AND source LIKE 'template:%'
+              AND confidence = 'inferred'
+              AND last_reviewed_at IS NULL
+            UNION ALL
+            SELECT created_at FROM risks
+            WHERE repo = ? AND source LIKE 'template:%'
+              AND confidence = 'inferred'
+              AND last_reviewed_at IS NULL
+            UNION ALL
+            SELECT created_at FROM deferred_work
+            WHERE repo = ? AND source LIKE 'template:%'
+              AND confidence = 'inferred'
+              AND last_reviewed_at IS NULL
+          )`,
+    args: [repo, repo, repo],
+  });
+
+  const templateCount = Number((templateRes.rows[0] as Record<string, unknown>)["c"] ?? 0);
+  const templateOldest = (templateRes.rows[0] as Record<string, unknown>)["oldest"];
+  if (templateCount > 0 && templateOldest != null) {
+    const oldestDays = ageDays(Number(templateOldest));
+    if (oldestDays > 30) {
+      gaps.push({
+        type: "unreviewed_template_records",
+        description:
+          `${templateCount} bootstrap template records have never been reviewed ` +
+          `(oldest: ${oldestDays} days). Template records are generic starting points — ` +
+          `review them in context of this codebase.`,
+        capture_hint: `Run: claude-lore review  (template records surface at high priority)`,
+        estimated_effort: templateCount > 10 ? "hours" : "minutes",
+        score: templateCount > 20 ? 13 : 8,
+      });
+    }
+  }
+
+  // 11. unresolved_conflict — contested records unresolved for more than 7 days
+  const contestedRes = await sessionsDb.execute({
+    sql: `SELECT id, content, symbol, created_at
+          FROM decisions
+          WHERE repo = ?
+            AND confidence = 'contested'
+            AND last_reviewed_at IS NULL
+            AND created_at < (unixepoch() - (7 * 24 * 60 * 60))`,
+    args: [repo],
+  });
+
+  for (const row of contestedRes.rows) {
+    const r = row as Record<string, unknown>;
+    const createdSec = Number(r["created_at"] ?? 0);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const daysContested = Math.round((nowSec - createdSec) / 86400);
+    gaps.push({
+      type: "unresolved_conflict",
+      symbol: r["symbol"] != null ? String(r["symbol"]) : undefined,
+      description:
+        `Decision "${String(r["content"]).slice(0, 60)}" has been contested for ` +
+        `${daysContested} days with no resolution`,
+      capture_hint: `Run: claude-lore review  and choose which version is correct`,
+      estimated_effort: "minutes",
+      record_id: String(r["id"]),
+      score: 15,
+      age_days: daysContested,
+    });
   }
 
   // Partition and score

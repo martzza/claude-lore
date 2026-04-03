@@ -1,7 +1,7 @@
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
-  getReasoningData,
+  getReasoningDataGrouped,
   logReasoning,
   findMcpSupersessionCandidates,
   getPendingRecords,
@@ -12,14 +12,14 @@ import {
 export function registerReasoningTools(server: McpServer): void {
   server.tool(
     "reasoning_get",
-    "Get decisions, deferred work, and risks from the knowledge graph. Each record's content is prefixed with its confidence tier.",
+    "Get decisions, deferred work, and risks from the knowledge graph, grouped by lifecycle status. Returns active records, historical (stale) decisions, recently superseded decisions, and conflict pairs where confidence='contested'. Each record's content is prefixed with its confidence tier.",
     {
       symbol: z.string().optional().describe("Filter by symbol/function/class name"),
       repo: z.string().optional().describe("Repo path to filter by (defaults to all)"),
       service: z.string().optional().describe("Service/package name to scope results within a monorepo (e.g. 'api', '@acme/worker', 'packages/auth')"),
     },
     async ({ symbol, repo, service }) => {
-      const result = await getReasoningData(symbol, repo, service);
+      const result = await getReasoningDataGrouped(symbol, repo, service);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -126,6 +126,35 @@ export function registerReasoningTools(server: McpServer): void {
       await discardRecord(id, table);
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ ok: true, id, table, discarded: true }) }],
+      };
+    },
+  );
+
+  // ── reasoning_review ──────────────────────────────────────────────────────
+  server.tool(
+    "reasoning_review",
+    "Apply a lifecycle transition to a record — mitigated, accepted, completed, abandoned, superseded, still_valid, or reopen. Only humans should call lifecycle actions. For risks: mitigated | accepted. For deferred: completed | abandoned. For all types: still_valid (refreshes review timestamp), reopen, superseded (requires superseded_by).",
+    {
+      id: z.string().describe("Record ID"),
+      table: z
+        .enum(["decisions", "deferred_work", "risks"])
+        .describe("Table the record belongs to"),
+      action: z
+        .enum(["mitigated", "accepted", "completed", "abandoned", "superseded", "still_valid", "reopen"])
+        .describe("Lifecycle action to apply"),
+      note: z.string().optional().describe("Optional note for the transition (e.g. mitigation details, resolution summary)"),
+      superseded_by: z.string().optional().describe("ID of the record that supersedes this one (required when action=superseded)"),
+    },
+    async ({ id, table, action, note, superseded_by }) => {
+      const PORT = process.env["CLAUDE_LORE_PORT"] ?? "37778";
+      const res = await fetch(`http://127.0.0.1:${PORT}/api/records/lifecycle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, table, action, note, superseded_by }),
+      });
+      const body = await res.json() as Record<string, unknown>;
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(body) }],
       };
     },
   );

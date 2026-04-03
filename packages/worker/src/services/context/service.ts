@@ -1,11 +1,12 @@
-import { getLastSessionSummary, getOpenDeferredWork } from "../sessions/service.js";
+import { getLastSessionSummary } from "../sessions/service.js";
 import { analyseKnowledgeGaps } from "../advisor/gaps.js";
 import { analyseParallelismFromDeferred } from "../advisor/parallel.js";
 import { analyseWorkflow } from "../advisor/workflow.js";
 import { analyseClaudeMd } from "../advisor/claudemd.js";
 import { findPortfolioForRepo } from "../portfolio/service.js";
-import { registryDb } from "../sqlite/db.js";
+import { sessionsDb, registryDb } from "../sqlite/db.js";
 import { getInjectableMemories } from "../memory/service.js";
+import { isHistorical, stalenessScore, STALENESS_THRESHOLDS } from "../../types/lifecycle.js";
 
 // ---------------------------------------------------------------------------
 // In-memory advisor cache (pre-warmed on planning-signal observations)
@@ -116,6 +117,7 @@ async function buildPortfolioSection(
     const depends = await registryDb.execute({
       sql: `SELECT symbol, repo FROM cross_repo_index
             WHERE portfolio = ? AND repo != ?
+              AND (lifecycle_status IS NULL OR lifecycle_status = 'active')
             ORDER BY indexed_at DESC
             LIMIT 10`,
       args: [portfolioName, repo],
@@ -153,11 +155,182 @@ async function buildPortfolioSection(
 // Main context builder
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Lifecycle-aware record queries for context injection
+// ---------------------------------------------------------------------------
+
+const DECISION_CAP   = 10;
+const DEFERRED_CAP   = 8;
+const DEFERRED_OLD_CAP = 3;  // max "possibly completed" items
+const RISK_CAP       = 5;
+
+function severityRank(content: string): number {
+  const l = content.toLowerCase();
+  if (l.includes("[critical]")) return 0;
+  if (l.includes("[high]"))     return 1;
+  if (l.includes("[medium]"))   return 2;
+  return 3;
+}
+
+async function buildDecisionsSection(repo: string, service?: string): Promise<string[]> {
+  const svcClause = service !== undefined ? " AND service IS ?" : "";
+  const args: (string | null)[] = [repo, ...(service !== undefined ? [service] : [])];
+  const res = await sessionsDb.execute({
+    sql: `SELECT id, content, confidence, created_at, last_reviewed_at, superseded_by
+          FROM decisions
+          WHERE repo = ? AND lifecycle_status = 'active' AND deprecated_by IS NULL${svcClause}
+          ORDER BY
+            CASE confidence WHEN 'confirmed' THEN 0 WHEN 'extracted' THEN 1 ELSE 2 END,
+            created_at DESC
+          LIMIT 50`,
+    args,
+  });
+
+  if (res.rows.length === 0) return [];
+
+  const nowSec = Date.now() / 1000;
+  const threshold = STALENESS_THRESHOLDS["decision"];
+  const active: string[] = [];
+  const historical: string[] = [];
+
+  for (const row of res.rows) {
+    const r = row as Record<string, unknown>;
+    const content   = String(r["content"] ?? "");
+    const conf      = String(r["confidence"] ?? "extracted");
+    const createdAt = Number(r["created_at"] ?? 0) / 1000; // stored as ms
+    const lastReview = r["last_reviewed_at"] != null ? Number(r["last_reviewed_at"]) : null;
+    const age = nowSec - createdAt;
+
+    const confLabel = conf === "confirmed" ? "[confirmed]" : conf === "inferred" ? "[inferred]" : "[extracted]";
+    const short = content.slice(0, 120) + (content.length > 120 ? "…" : "");
+
+    if (age > threshold && (lastReview === null || nowSec - lastReview > threshold)) {
+      historical.push(`- [historical] ${confLabel} ${short}`);
+    } else {
+      active.push(`- ${confLabel} ${short}`);
+    }
+  }
+
+  const shownActive = active.slice(0, DECISION_CAP);
+  const shownHistorical = historical.slice(0, Math.max(0, DECISION_CAP - shownActive.length));
+  const totalCount = res.rows.length;
+
+  const lines: string[] = [
+    `### Active decisions (${shownActive.length + shownHistorical.length} of ${totalCount})`,
+  ];
+  lines.push(...shownActive, ...shownHistorical);
+  if (totalCount > DECISION_CAP) {
+    lines.push(`*(${totalCount - DECISION_CAP} more — run \`claude-lore review\`)*`);
+  }
+  lines.push("");
+  return lines;
+}
+
+async function buildDeferredSection(repo: string, service?: string): Promise<string[]> {
+  const svcClause = service !== undefined ? " AND service IS ?" : "";
+  const args: (string | null)[] = [repo, ...(service !== undefined ? [service] : [])];
+  const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  const res = await sessionsDb.execute({
+    sql: `SELECT id, content, symbol, blocked_by, created_at, touched_by_sessions
+          FROM deferred_work
+          WHERE repo = ? AND lifecycle_status = 'active' AND deprecated_by IS NULL${svcClause}
+          ORDER BY blocked_by IS NOT NULL DESC, created_at DESC`,
+    args,
+  });
+
+  if (res.rows.length === 0) return [];
+
+  const current: string[] = [];
+  const possiblyDone: string[] = [];
+
+  for (const row of res.rows) {
+    const r = row as Record<string, unknown>;
+    const content   = String(r["content"] ?? "");
+    const symbol    = r["symbol"] != null ? ` *(${String(r["symbol"])})*` : "";
+    const blockedBy = r["blocked_by"] != null ? String(r["blocked_by"]) : null;
+    const createdAt = Number(r["created_at"] ?? 0);
+    const touched   = JSON.parse(String(r["touched_by_sessions"] ?? "[]")) as string[];
+    const isOld     = createdAt < cutoffMs;
+    const short     = content.slice(0, 100) + (content.length > 100 ? "…" : "");
+
+    if (!isOld || blockedBy) {
+      const blockLabel = blockedBy ? ` *(blocked)*` : "";
+      current.push(`- ${short}${symbol}${blockLabel}`);
+    } else if (possiblyDone.length < DEFERRED_OLD_CAP) {
+      const touchLabel = touched.length >= 2 ? ` ⚡ touched in ${touched.length} sessions` : "";
+      possiblyDone.push(`- ${short}${symbol}${touchLabel}`);
+    }
+  }
+
+  const shownCurrent = current.slice(0, DEFERRED_CAP);
+  const totalCount   = res.rows.length;
+  const lines: string[] = [`### Open deferred work (${shownCurrent.length} of ${totalCount})`];
+  lines.push(...shownCurrent);
+
+  if (possiblyDone.length > 0) {
+    lines.push(`*[possibly completed — ${possiblyDone.length} item${possiblyDone.length !== 1 ? "s" : ""} older than 30 days — run \`claude-lore review\`]*`);
+    lines.push(...possiblyDone);
+  }
+  if (totalCount > DEFERRED_CAP) {
+    lines.push(`*(${totalCount - DEFERRED_CAP} more — run \`claude-lore review\`)*`);
+  }
+  lines.push("");
+  return lines;
+}
+
+async function buildRisksSection(repo: string, service?: string): Promise<string[]> {
+  const svcClause = service !== undefined ? " AND service IS ?" : "";
+  const args: (string | null)[] = [repo, ...(service !== undefined ? [service] : [])];
+  const res = await sessionsDb.execute({
+    sql: `SELECT id, content, confidence, created_at, last_reviewed_at
+          FROM risks
+          WHERE repo = ? AND lifecycle_status = 'active' AND deprecated_by IS NULL${svcClause}
+          ORDER BY created_at DESC
+          LIMIT 50`,
+    args,
+  });
+
+  if (res.rows.length === 0) return [];
+
+  const nowSec      = Date.now() / 1000;
+  const riskThresh  = STALENESS_THRESHOLDS["risk"];
+  const rows = (res.rows as Record<string, unknown>[]).sort((a, b) => {
+    const sa = severityRank(String(a["content"] ?? ""));
+    const sb = severityRank(String(b["content"] ?? ""));
+    if (sa !== sb) return sa - sb;
+    // Within same severity: confirmed first
+    const ca = String(a["confidence"] ?? ""); const cb = String(b["confidence"] ?? "");
+    return (ca === "confirmed" ? 0 : 1) - (cb === "confirmed" ? 0 : 1);
+  });
+
+  const lines: string[] = [`### Active risks (top ${Math.min(rows.length, RISK_CAP)})`];
+  let shown = 0;
+  for (const r of rows) {
+    if (shown >= RISK_CAP) break;
+    const content    = String(r["content"] ?? "");
+    const conf       = String(r["confidence"] ?? "extracted");
+    const createdAt  = Number(r["created_at"] ?? 0) / 1000;
+    const lastReview = r["last_reviewed_at"] != null ? Number(r["last_reviewed_at"]) : null;
+    const age        = nowSec - createdAt;
+    const sev        = content.match(/\[(critical|high|medium|low)\]/i)?.[1]?.toUpperCase() ?? "LOW";
+    const clean      = content.replace(/^\[(critical|high|medium|low)\]\s*/i, "");
+    const short      = clean.slice(0, 100) + (clean.length > 100 ? "…" : "");
+    const confLabel  = conf === "confirmed" ? "confirmed" : conf;
+    const stale      = age > riskThresh && (lastReview === null || nowSec - lastReview > riskThresh);
+    const staleLabel = stale ? " [unverified]" : "";
+    lines.push(`- [${sev} · ${confLabel}]${staleLabel} ${short}`);
+    shown++;
+  }
+  if (rows.length > RISK_CAP) {
+    lines.push(`*(${rows.length - RISK_CAP} more risks — run \`claude-lore advisor gaps\`)*`);
+  }
+  lines.push("");
+  return lines;
+}
+
 export async function buildContextString(repo: string, cwd?: string, service?: string): Promise<string> {
-  const [lastSession, deferred] = await Promise.all([
-    getLastSessionSummary(repo, service),
-    getOpenDeferredWork(repo, service),
-  ]);
+  const lastSession = await getLastSessionSummary(repo, service);
 
   const portfolioName = findPortfolioForRepo(repo);
   const repoBasename = repo.split("/").pop() ?? repo;
@@ -198,15 +371,15 @@ export async function buildContextString(repo: string, cwd?: string, service?: s
     parts.push(`### Last session summary\n${lastSession.summary}\n`);
   }
 
-  if (deferred.length > 0) {
-    parts.push("### Open deferred work");
-    for (const item of deferred) {
-      const d = item as Record<string, unknown>;
-      const symbol = d["symbol"] ? ` *(${String(d["symbol"])})*` : "";
-      parts.push(`- ${String(d["content"])}${symbol}`);
-    }
-    parts.push("");
-  }
+  // Lifecycle-aware record sections
+  const [decisionsLines, deferredLines, risksLines] = await Promise.all([
+    buildDecisionsSection(repo, service),
+    buildDeferredSection(repo, service),
+    buildRisksSection(repo, service),
+  ]);
+  if (decisionsLines.length > 0) parts.push(decisionsLines.join("\n"));
+  if (deferredLines.length > 0)  parts.push(deferredLines.join("\n"));
+  if (risksLines.length > 0)     parts.push(risksLines.join("\n"));
 
   // Advisor section — non-blocking, max 6 lines, 2-second timeout
   if (cwd) {

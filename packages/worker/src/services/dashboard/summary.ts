@@ -45,6 +45,32 @@ export interface GitInfo {
   last_commit_relative: string | null;
 }
 
+export interface LifecycleHealth {
+  active: {
+    decisions: number;
+    risks:     number;
+    deferred:  number;
+  };
+  historical: {
+    decisions: number;
+  };
+  superseded: {
+    decisions: number;
+  };
+  mitigated_risks:     number;
+  accepted_risks:      number;
+  completed_deferred:  number;
+  abandoned_deferred:  number;
+  review_queue: {
+    total:    number;
+    urgent:   number;   // contested + zombie (pending_review=1)
+    contested: number;
+    zombie:   number;   // records with anchor_status='orphaned' and pending_review=1
+  };
+  last_reviewed_at: number | null;
+  unreviewed_template_records: number;
+}
+
 export interface RepoSummary {
   name:            string;
   path:            string;
@@ -62,6 +88,7 @@ export interface RepoSummary {
   };
   lore_quality:         LoreQuality;
   structural:           StructuralInfo;
+  lifecycle:            LifecycleHealth;
   top_decisions:        Array<{ id: string; content: string; symbol: string | null }>;
   critical_risks:       Array<{ id: string; content: string; symbol: string | null }>;
   open_deferred:        Array<{ id: string; content: string }>;
@@ -116,8 +143,9 @@ export interface SystemSummary {
     personal: { ok: boolean; row_count: number };
   };
   ai_compression: {
-    api_key_set:   boolean;
+    mode:                "mcp" | "rule_based";
     sessions_compressed: number;
+    pending_compression: number;
   };
   turso: {
     connected:  boolean;
@@ -134,7 +162,7 @@ export interface SystemSummary {
     CLAUDE_LORE_PORT:         "set" | "not_set";
     CLAUDE_LORE_TURSO_URL:    "set" | "not_set";
     CLAUDE_LORE_AUTH_TOKEN:   "set" | "not_set";
-    ANTHROPIC_API_KEY:        "set" | "not_set";
+    COMPRESSION_MODE:         "mcp" | "rule_based";
   };
   update_check: import("./version-check.js").VersionCheckResult;
   binary: {
@@ -405,6 +433,131 @@ export async function assembleSummary(): Promise<DashboardSummary> {
     allPendingByRepo.set(r, (pendingMap.get(r) ?? 0) + (pendingRisksMap.get(r) ?? 0) + (pendingDeferredMap.get(r) ?? 0));
   }
 
+  // ── Lifecycle health per repo ────────────────────────────────────────────
+  const DECISION_STALE_SEC = 180 * 24 * 60 * 60;
+
+  async function lifecycleMap(
+    table: string,
+    statusFilter: string,
+  ): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    try {
+      const r = await sessionsDb.execute({
+        sql: `SELECT repo, COUNT(*) as c FROM ${table} WHERE lifecycle_status = ? GROUP BY repo`,
+        args: [statusFilter],
+      });
+      for (const row of r.rows) map.set(String(row["repo"]), Number(row["c"] ?? 0));
+    } catch {}
+    return map;
+  }
+
+  async function historicalDecisionMap(): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const cutoffSec = nowSec - DECISION_STALE_SEC;
+    try {
+      const r = await sessionsDb.execute({
+        sql: `SELECT repo, COUNT(*) as c FROM decisions
+              WHERE lifecycle_status = 'active'
+                AND (created_at / 1000) < ?
+                AND (last_reviewed_at IS NULL OR last_reviewed_at < ?)
+              GROUP BY repo`,
+        args: [cutoffSec, cutoffSec],
+      });
+      for (const row of r.rows) map.set(String(row["repo"]), Number(row["c"] ?? 0));
+    } catch {}
+    return map;
+  }
+
+  async function lastReviewedMap(): Promise<Map<string, number | null>> {
+    const map = new Map<string, number | null>();
+    try {
+      for (const table of ["decisions", "risks", "deferred_work"] as const) {
+        const r = await sessionsDb.execute({
+          sql: `SELECT repo, MAX(last_reviewed_at) as latest FROM ${table}
+                WHERE last_reviewed_at IS NOT NULL GROUP BY repo`,
+          args: [],
+        });
+        for (const row of r.rows) {
+          const repo = String(row["repo"]);
+          const existing = map.get(repo) ?? null;
+          const v = Number(row["latest"]);
+          map.set(repo, existing === null ? v : Math.max(existing, v));
+        }
+      }
+    } catch {}
+    return map;
+  }
+
+  async function unreviewedTemplateMap(): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    const thirtyDaysAgoMs = Date.now() - 30 * MS_PER_DAY;
+    try {
+      for (const table of ["decisions", "risks", "deferred_work"] as const) {
+        const r = await sessionsDb.execute({
+          sql: `SELECT repo, COUNT(*) as c FROM ${table}
+                WHERE source LIKE 'template:%'
+                  AND confidence = 'inferred'
+                  AND last_reviewed_at IS NULL
+                  AND created_at < ?
+                GROUP BY repo`,
+          args: [thirtyDaysAgoMs],
+        });
+        for (const row of r.rows) {
+          const repo = String(row["repo"]);
+          map.set(repo, (map.get(repo) ?? 0) + Number(row["c"] ?? 0));
+        }
+      }
+    } catch {}
+    return map;
+  }
+
+  async function contestedMap(): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    try {
+      const r = await sessionsDb.execute({
+        sql: `SELECT repo, COUNT(*) as c FROM decisions WHERE confidence = 'contested' GROUP BY repo`,
+        args: [],
+      });
+      for (const row of r.rows) map.set(String(row["repo"]), Number(row["c"] ?? 0));
+    } catch {}
+    return map;
+  }
+
+  async function zombieMap(): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    try {
+      const r = await sessionsDb.execute({
+        sql: `SELECT repo, COUNT(*) as c FROM deferred_work
+              WHERE anchor_status = 'orphaned' AND pending_review = 1 GROUP BY repo`,
+        args: [],
+      });
+      for (const row of r.rows) map.set(String(row["repo"]), Number(row["c"] ?? 0));
+    } catch {}
+    return map;
+  }
+
+  const [
+    activeDecMap, activeRisksMap, activeDeferredMap,
+    supDecMap, historicalDecMap,
+    mitigatedMap, acceptedMap, completedDefMap, abandonedDefMap,
+    lastRevMap, tmplMap, contMap, zombMap,
+  ] = await Promise.all([
+    lifecycleMap("decisions", "active"),
+    lifecycleMap("risks", "active"),
+    lifecycleMap("deferred_work", "active"),
+    lifecycleMap("decisions", "superseded"),
+    historicalDecisionMap(),
+    lifecycleMap("risks", "mitigated"),
+    lifecycleMap("risks", "accepted"),
+    lifecycleMap("deferred_work", "completed"),
+    lifecycleMap("deferred_work", "abandoned"),
+    lastReviewedMap(),
+    unreviewedTemplateMap(),
+    contestedMap(),
+    zombieMap(),
+  ]);
+
   // Lore quality by confidence level per repo
   async function confidenceBreakdown(table: string): Promise<Map<string, Record<string, number>>> {
     const map = new Map<string, Record<string, number>>();
@@ -606,6 +759,31 @@ export async function assembleSummary(): Promise<DashboardSummary> {
 
     const advisor = advisorMap.get(repoPath) ?? { gap_score: 0, priority_gaps: 0, quick_wins: 0 };
 
+    const contested = contMap.get(repoPath) ?? 0;
+    const zombie = zombMap.get(repoPath) ?? 0;
+    const urgent = contested + zombie;
+    const lifecycle: LifecycleHealth = {
+      active: {
+        decisions: activeDecMap.get(repoPath) ?? 0,
+        risks:     activeRisksMap.get(repoPath) ?? 0,
+        deferred:  activeDeferredMap.get(repoPath) ?? 0,
+      },
+      historical: { decisions: historicalDecMap.get(repoPath) ?? 0 },
+      superseded: { decisions: supDecMap.get(repoPath) ?? 0 },
+      mitigated_risks:    mitigatedMap.get(repoPath) ?? 0,
+      accepted_risks:     acceptedMap.get(repoPath) ?? 0,
+      completed_deferred: completedDefMap.get(repoPath) ?? 0,
+      abandoned_deferred: abandonedDefMap.get(repoPath) ?? 0,
+      review_queue: {
+        total:    pending,
+        urgent,
+        contested,
+        zombie,
+      },
+      last_reviewed_at:             lastRevMap.get(repoPath) ?? null,
+      unreviewed_template_records:  tmplMap.get(repoPath) ?? 0,
+    };
+
     repoSummaries.push({
       name,
       path: repoPath,
@@ -616,6 +794,7 @@ export async function assembleSummary(): Promise<DashboardSummary> {
       records: { decisions, risks, deferred_open: deferred, confirmed, pending_review: pending, total },
       lore_quality:   loreQuality,
       structural,
+      lifecycle,
       top_decisions:  topDecisionsMap.get(repoPath)  ?? [],
       critical_risks: critRisksMap.get(repoPath)     ?? [],
       open_deferred:  openDeferredMap.get(repoPath)  ?? [],
@@ -702,12 +881,20 @@ export async function assembleSummary(): Promise<DashboardSummary> {
   } catch { /* ok */ }
 
   let sessionsCompressed = 0;
+  let sessionsPendingCompression = 0;
   try {
     const r = await sessionsDb.execute({
       sql: "SELECT COUNT(*) as n FROM sessions WHERE summary IS NOT NULL AND summary != ''",
       args: [],
     });
     sessionsCompressed = Number(r.rows[0]?.["n"] ?? 0);
+  } catch { /* ok */ }
+  try {
+    const r = await sessionsDb.execute({
+      sql: "SELECT COUNT(*) as n FROM sessions WHERE pending_compression = 1",
+      args: [],
+    });
+    sessionsPendingCompression = Number(r.rows[0]?.["n"] ?? 0);
   } catch { /* ok */ }
 
   // Binary check
@@ -753,8 +940,9 @@ export async function assembleSummary(): Promise<DashboardSummary> {
       personal: dbPersonal,
     },
     ai_compression: {
-      api_key_set:         !!process.env["ANTHROPIC_API_KEY"],
+      mode:                "mcp" as const,
       sessions_compressed: sessionsCompressed,
+      pending_compression: sessionsPendingCompression,
     },
     turso: {
       connected: turso.connected,
@@ -765,7 +953,7 @@ export async function assembleSummary(): Promise<DashboardSummary> {
       CLAUDE_LORE_PORT:       process.env["CLAUDE_LORE_PORT"]       ? "set" : "not_set",
       CLAUDE_LORE_TURSO_URL:  process.env["CLAUDE_LORE_TURSO_URL"]  ? "set" : "not_set",
       CLAUDE_LORE_AUTH_TOKEN: process.env["CLAUDE_LORE_AUTH_TOKEN"] ? "set" : "not_set",
-      ANTHROPIC_API_KEY:      process.env["ANTHROPIC_API_KEY"]      ? "set" : "not_set",
+      COMPRESSION_MODE:       "mcp" as const,
     },
     update_check: versionCheck,
     binary: {

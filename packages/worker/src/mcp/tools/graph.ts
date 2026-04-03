@@ -16,11 +16,11 @@ function render(graph: import("../../services/graph/service.js").GraphData, form
 
 export function registerGraphTools(server: McpServer): void {
   // -------------------------------------------------------------------------
-  // graph_decisions(repo, format?) — decision hierarchy
+  // graph_decisions(repo, format?, lifecycle?) — decision hierarchy
   // -------------------------------------------------------------------------
   server.tool(
     "graph_decisions",
-    "Generate a visual decision hierarchy graph for a repo. Returns Mermaid by default — Claude Code renders Mermaid inline in chat. Use format='json' for raw data.",
+    "Generate a visual decision hierarchy graph for a repo. Returns Mermaid by default — Claude Code renders Mermaid inline in chat. Use format='json' for raw data. lifecycle='active' (default) shows only active records; 'include_historical' adds stale-but-valid decisions; 'full_history' shows superseded chains.",
     {
       repo: z.string().describe("Repo path to graph"),
       format: z
@@ -28,9 +28,14 @@ export function registerGraphTools(server: McpServer): void {
         .optional()
         .default("mermaid")
         .describe("Output format. mermaid (default), dot, or json"),
+      lifecycle: z
+        .enum(["active", "include_historical", "full_history"])
+        .optional()
+        .default("active")
+        .describe("Lifecycle filter: active (default), include_historical, or full_history (shows superseded chains)"),
     },
-    async ({ repo, format }) => {
-      const graph = await buildDecisionHierarchy(repo);
+    async ({ repo, format, lifecycle }) => {
+      const graph = await buildDecisionHierarchy(repo, lifecycle ?? "active");
       const text = render(graph, format ?? "mermaid");
       return {
         content: [{ type: "text" as const, text }],
@@ -39,11 +44,11 @@ export function registerGraphTools(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
-  // graph_symbol(symbol, repo, format?) — symbol impact graph
+  // graph_symbol(symbol, repo, format?, lifecycle?) — symbol impact graph
   // -------------------------------------------------------------------------
   server.tool(
     "graph_symbol",
-    "Generate a symbol impact graph — the symbol at centre, radiating out to linked decisions, risks, deferred items, and cross-repo consumers.",
+    "Generate a symbol impact graph — the symbol at centre, radiating out to linked decisions, risks, deferred items, and cross-repo consumers. lifecycle='active' (default), 'include_historical', or 'full_history'.",
     {
       symbol: z.string().describe("Symbol name to visualise"),
       repo: z.string().describe("Repo that owns the symbol"),
@@ -52,9 +57,14 @@ export function registerGraphTools(server: McpServer): void {
         .optional()
         .default("mermaid")
         .describe("Output format"),
+      lifecycle: z
+        .enum(["active", "include_historical", "full_history"])
+        .optional()
+        .default("active")
+        .describe("Lifecycle filter"),
     },
-    async ({ symbol, repo, format }) => {
-      const graph = await buildSymbolImpactGraph(symbol, repo);
+    async ({ symbol, repo, format, lifecycle }) => {
+      const graph = await buildSymbolImpactGraph(symbol, repo, lifecycle ?? "active");
       const text = render(graph, format ?? "mermaid");
       return {
         content: [{ type: "text" as const, text }],
