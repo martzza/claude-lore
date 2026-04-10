@@ -1,8 +1,15 @@
 import { Router } from "express";
 import { join, isAbsolute, resolve } from "path";
+import { homedir } from "os";
+import { existsSync } from "fs";
+import { createClient } from "@libsql/client";
 import { buildIndex, getIndexStats, isIndexStale } from "../services/structural/indexer.js";
 import { getStructuralClient } from "../services/structural/db-cache.js";
 import { startWatch, stopWatch, isWatching } from "../services/structural/watcher.js";
+import { generateWiki, renderWikiPageMarkdown, renderWikiIndexMarkdown } from "../services/structural/wiki.js";
+import { getWikiCache, setWikiCache, invalidateWikiCache, WIKI_CACHE_TTL_MS } from "../services/structural/wiki-cache.js";
+
+export { invalidateWikiCache };
 
 const router = Router();
 
@@ -29,6 +36,7 @@ router.post("/index", async (req, res) => {
 
   try {
     const result = await buildIndex(repo ?? cwd, cwd, force ?? false);
+    invalidateWikiCache(cwd);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -363,6 +371,86 @@ router.get("/watch/status", (req, res) => {
     return;
   }
   res.json({ watching: isWatching(repo), repo });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/structural/wiki?cwd=&repo=&format=json|markdown&community=
+// ---------------------------------------------------------------------------
+
+router.get("/wiki", async (req, res) => {
+  const cwd       = String(req.query["cwd"] ?? "");
+  const repo      = String(req.query["repo"] ?? cwd);
+  const format    = String(req.query["format"] ?? "json");
+  const community = String(req.query["community"] ?? "");
+
+  if (!cwd || !isAbsolute(cwd)) {
+    res.status(400).json({ error: "cwd must be an absolute path" });
+    return;
+  }
+
+  const structDbPath  = join(cwd, ".codegraph", "structural.db");
+  const sessionsDbPath = join(homedir(), ".codegraph", "sessions.db");
+
+  if (!existsSync(structDbPath)) {
+    res.status(404).json({ error: "structural index not built — run claude-lore index" });
+    return;
+  }
+
+  try {
+    // Check shared cache (5 min TTL)
+    const cached = getWikiCache(cwd);
+    let pages: Awaited<ReturnType<typeof generateWiki>>;
+
+    if (cached && Date.now() - cached.generatedAt < WIKI_CACHE_TTL_MS) {
+      pages = cached.pages;
+    } else {
+      const structDb = createClient({ url: `file:${structDbPath}` });
+      const reasonDb = createClient({ url: `file:${sessionsDbPath}` });
+      pages = await generateWiki(structDb, reasonDb, repo);
+      setWikiCache(cwd, pages);
+    }
+
+    // Filter by community if specified
+    const filtered = community
+      ? pages.filter(p => p.community_name === community || p.community_id === community)
+      : pages;
+
+    if (format === "markdown") {
+      if (community) {
+        const page = filtered[0];
+        if (!page) {
+          res.status(404).json({ error: `community '${community}' not found` });
+          return;
+        }
+        res.type("text/markdown").send(renderWikiPageMarkdown(page));
+      } else {
+        const index = renderWikiIndexMarkdown(pages);
+        const allPages = pages.map(renderWikiPageMarkdown).join("\n\n---\n\n");
+        res.type("text/markdown").send(index + "\n\n---\n\n" + allPages);
+      }
+      return;
+    }
+
+    // JSON response
+    if (community) {
+      const page = filtered[0];
+      if (!page) {
+        res.status(404).json({ error: `community '${community}' not found` });
+        return;
+      }
+      res.json({ community: page });
+    } else {
+      res.json({
+        communities: pages.length,
+        total_symbols: pages.reduce((n, p) => n + p.size, 0),
+        generated_at: pages[0]?.generated_at ?? Date.now(),
+        pages: filtered,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
 });
 
 export default router;

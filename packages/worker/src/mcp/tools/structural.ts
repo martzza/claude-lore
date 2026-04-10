@@ -7,6 +7,7 @@ import { createClient } from "@libsql/client";
 import { getStructuralClient } from "../../services/structural/db-cache.js";
 import { getReasoningData } from "../../services/reasoning/service.js";
 import { scoreChangedSymbols, getChangedSymbols, deriveVerdict } from "../../services/structural/risk-scorer.js";
+import { generateWiki, renderWikiPageMarkdown, renderWikiIndexMarkdown } from "../../services/structural/wiki.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -837,6 +838,68 @@ export function registerStructuralTools(server: McpServer): void {
           }),
         }],
       };
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // generate_wiki — generate community wiki pages from the structural index
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "generate_wiki",
+    "Generate a wiki for the codebase structured by community. Returns community pages with symbols, decisions, risks, and deferred work. Use community= to get a single community page. format=markdown returns rendered Markdown.",
+    {
+      repo:      z.string().optional().describe("Repo name (used to look up reasoning records). Defaults to cwd basename."),
+      community: z.string().optional().describe("Filter to a specific community name or id. Omit for all communities."),
+      format:    z.enum(["json", "markdown"]).optional().describe("Output format. Default: json."),
+    },
+    async ({ repo, community, format = "json" }) => {
+      const cwd = process.cwd();
+      const repoId = repo ?? cwd;
+      const structDbPath  = join(cwd, ".codegraph", "structural.db");
+      const sessionsDbPath = join(homedir(), ".codegraph", "sessions.db");
+
+      if (!existsSync(structDbPath)) {
+        return notIndexedError();
+      }
+
+      try {
+        const structDb = createClient({ url: `file:${structDbPath}` });
+        const reasonDb = createClient({ url: `file:${sessionsDbPath}` });
+        const pages    = await generateWiki(structDb, reasonDb, repoId);
+
+        const filtered = community
+          ? pages.filter(p => p.community_name === community || p.community_id === community)
+          : pages;
+
+        if (format === "markdown") {
+          let md: string;
+          if (community) {
+            if (filtered.length === 0) {
+              return { content: [{ type: "text" as const, text: `Community '${community}' not found.` }] };
+            }
+            md = renderWikiPageMarkdown(filtered[0]!);
+          } else {
+            md = renderWikiIndexMarkdown(pages) + "\n\n---\n\n" + pages.map(renderWikiPageMarkdown).join("\n\n---\n\n");
+          }
+          return { content: [{ type: "text" as const, text: md }] };
+        }
+
+        // JSON
+        const result = community
+          ? { community: filtered[0] ?? null }
+          : {
+              communities:   pages.length,
+              total_symbols: pages.reduce((n, p) => n + p.size, 0),
+              generated_at:  pages[0]?.generated_at ?? Date.now(),
+              pages:         filtered,
+            };
+
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: msg }) }] };
+      }
     },
   );
 }

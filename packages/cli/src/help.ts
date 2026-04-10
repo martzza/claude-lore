@@ -571,6 +571,32 @@ export const CLI_COMMANDS: CommandHelp[] = [
   },
 
   {
+    name: "wiki",
+    group: "visualising",
+    summary: "Generate a community wiki from the structural index.",
+    description:
+      "Generates structured Markdown wiki pages for each detected community in the codebase. Each page lists the community's files, symbols, associated decisions, risks, and open deferred work from the knowledge graph. Supports writing to a directory (one .md per community + index.md) or streaming to stdout.",
+    usage: [
+      "claude-lore wiki",
+      "claude-lore wiki --community build",
+      "claude-lore wiki --output docs/wiki/",
+      "claude-lore wiki --output docs/wiki/ --open",
+    ],
+    flags: [
+      { flag: "--community <name>",  desc: "Only generate wiki for this community name or id" },
+      { flag: "--format <fmt>",      desc: "Output format: md (default) | html" },
+      { flag: "--output <dir>",      desc: "Write one .md per community + index.md to this directory" },
+      { flag: "--open",              desc: "Open generated index.md after writing (requires --output)" },
+    ],
+    examples: [
+      { command: "claude-lore wiki",                         desc: "Print all community wiki pages to stdout" },
+      { command: "claude-lore wiki --community build",       desc: "Print only the 'build' community page" },
+      { command: "claude-lore wiki --output docs/wiki/",     desc: "Write wiki to docs/wiki/ directory" },
+    ],
+    seeAlso: ["index", "review-map", "detect-changes"],
+  },
+
+  {
     name: "review-propagation",
     group: "visualising",
     summary: "Files transitively affected by changing a given file.",

@@ -569,6 +569,19 @@ program
     await runDetectChanges(opts);
   });
 
+// claude-lore wiki
+program
+  .command("wiki")
+  .description("Generate a community wiki from the structural index")
+  .option("--community <name>", "Only generate wiki for this community name or id")
+  .option("--format <fmt>", "Output format: md (default)|html", "md")
+  .option("--output <dir>", "Write wiki files to this directory (one .md per community + index.md)")
+  .option("--open", "Open the generated index in the system viewer (requires --output)")
+  .action(async (opts: { community?: string; format?: "md" | "html"; output?: string; open?: boolean }) => {
+    const { runWiki } = await import("./commands/wiki.js");
+    await runWiki(opts);
+  });
+
 // claude-lore mode
 const modeCmd = program
   .command("mode")

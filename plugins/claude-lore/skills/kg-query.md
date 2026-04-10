@@ -86,6 +86,9 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "/lore audit status" | `GET /api/audit/status?repo={cwd}` — last audit run stats |
 | "/lore audit estimate" | Direct to CLI: `claude-lore audit --estimate` — no API call needed |
 | "/lore compress" or "compress session / run compression" | `compress_session(repo)` → extract → `submit_compression(session_id, repo, extraction)` |
+| "/lore wiki" or "generate a wiki / show community pages" | `generate_wiki(repo, format="markdown")` — returns all community wiki pages |
+| "/lore wiki <community>" or "wiki for X community" | `generate_wiki(community=X, repo, format="markdown")` — single community page |
+| "what symbols are in the X module/community" | `generate_wiki(community=X, repo)` → extract `symbols` list |
 
 **If structural index not built** (`codegraph_*` returns `error: structural index not built`):
 → Fall back to `portfolio_impact` for blast radius

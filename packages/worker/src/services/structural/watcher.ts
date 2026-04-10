@@ -1,6 +1,7 @@
 import { watch, FSWatcher, existsSync, writeFileSync, chmodSync, readFileSync } from "fs";
 import { join } from "path";
 import { buildIndex } from "./indexer.js";
+import { invalidateWikiCache } from "./wiki-cache.js";
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ export async function startWatch(repo: string, cwd: string): Promise<void> {
       try {
         const result = await buildIndex(repo, cwd);
         if (!result.skipped) {
+          invalidateWikiCache(cwd);
           console.log(
             `[claude-lore]            → ${result.changed_files ?? 0} files re-parsed in ${result.duration_ms}ms` +
             (result.unchanged_files ? ` (${result.unchanged_files} skipped)` : ""),
