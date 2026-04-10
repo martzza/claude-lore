@@ -52,7 +52,7 @@ export function getMcpStats(): McpStats {
 export function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "claude-lore",
-    version: "1.1.0",
+    version: "1.2.2",
   });
 
   // Wrap the server's tool call dispatch to track stats.

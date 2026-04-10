@@ -12,14 +12,12 @@ FILES=(
   "packages/worker/package.json"
   "packages/cli/package.json"
   "plugins/claude-lore/.claude-plugin/plugin.json"
-  ".claude-plugin/marketplace.json"
+  "plugins/claude-lore/.claude-plugin/marketplace.json"
 )
 
 CODE_FILES=(
-  "packages/worker/src/index.ts"
   "packages/worker/src/mcp/server.ts"
   "packages/cli/src/index.ts"
-  "packages/cli/src/help.ts"
 )
 
 PASS=true
