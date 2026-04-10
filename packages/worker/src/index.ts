@@ -24,6 +24,13 @@ import doctorRouter from "./routes/doctor.js";
 import structuralRouter from "./routes/structural.js";
 import dashboardRouter from "./routes/dashboard.js";
 import { getIndexStats } from "./services/structural/indexer.js";
+import { readFileSync } from "fs";
+import { join } from "path";
+
+const pkg = JSON.parse(
+  readFileSync(join(import.meta.dir, "../package.json"), "utf8")
+);
+const VERSION: string = pkg.version;
 
 const PORT = parseInt(process.env["CLAUDE_LORE_PORT"] ?? "37778", 10);
 
@@ -53,7 +60,7 @@ async function main(): Promise<void> {
 
     res.json({
       status: "ok",
-      version: "1.1.0",
+      version: VERSION,
       port: PORT,
       ts: Date.now(),
       turso: getTursoStatus(),
