@@ -42,12 +42,13 @@ Map the user's question to the correct MCP tool sequence before answering:
 
 | Question type | Tool sequence |
 |---|---|
+| "help me work on a task / give me context for X" | `get_minimal_context(task, repo)` — primary entry point; returns compact context under 300 tokens |
 | "what did we decide about X" | `reasoning_get(symbol=X, repo)` |
 | "what breaks if I change X" | `codegraph_impact(X, repo)` then `portfolio_impact(X, repo)` for cross-repo |
 | "who calls X / what uses X" | `codegraph_callers(symbol, repo)` |
 | "what does X call / what does X depend on" | `codegraph_callees(symbol, repo)` |
 | "find symbol / search for X" | `codegraph_search(query, repo)` |
-| "context for task / help me work on X" | `codegraph_context(task, repo)` |
+| "context for task / help me work on X" | `get_minimal_context(task, repo)` first; fall back to `codegraph_context(task, repo)` for full context |
 | "what's deferred on X" | `reasoning_get(symbol=X, repo)` — filter to `deferred_work` type |
 | "what was in progress last session" | `session_load(repo)` → `session_search(query, repo)` |
 | "why does this code look like this" | `reasoning_get(symbol, repo)` + `session_load(repo)` |

@@ -120,6 +120,17 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column already exists */ }
   }
+
+  // Rebuild unique index to include kind (Phase C prerequisite).
+  // The old index was (caller, callee, caller_file); the new one adds kind so
+  // 'calls' and 'test_covers' edges for the same pair can coexist.
+  try { await db.execute(`DROP INDEX IF EXISTS idx_call_graph_unique`); } catch {}
+  try {
+    await db.execute(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_call_graph_unique
+       ON call_graph(caller, callee, caller_file, kind)`,
+    );
+  } catch {}
 }
 
 // ---------------------------------------------------------------------------
@@ -344,17 +355,19 @@ async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promis
     }
 
     // Deduplicate call edges within this file (weight = occurrence count)
-    const edgeWeight = new Map<string, { call_line: number; weight: number; callee_file?: string }>();
+    // Key includes kind so 'calls' and 'test_covers' edges for the same pair coexist
+    const edgeWeight = new Map<string, { call_line: number; weight: number; callee_file?: string; kind: string }>();
     for (const call of parsed.calls) {
-      const key = `${call.caller}:${call.callee}`;
+      const key = `${call.caller}:${call.callee}:${call.kind}`;
       const existing = edgeWeight.get(key);
       if (existing) {
         existing.weight++;
       } else {
         edgeWeight.set(key, {
-          call_line:  call.call_line,
-          weight:     1,
+          call_line:   call.call_line,
+          weight:      1,
           callee_file: symbolFileMap.get(call.callee),
+          kind:        call.kind,
         });
       }
     }
@@ -365,16 +378,20 @@ async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promis
       const batch = edges.slice(i, i + BATCH_SIZE);
       await db.batch(
         batch.map(([key, meta]) => {
-          const [caller, callee] = key.split(":") as [string, string];
+          const parts = key.split(":");
+          const kind   = parts.pop()!;
+          const callee = parts.pop()!;
+          const caller = parts.join(":");   // handles any colons in caller name
           return {
-            sql:  `INSERT INTO call_graph (id, caller, callee, caller_file, callee_file, call_line, weight)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(caller, callee, caller_file) DO UPDATE SET weight = weight + excluded.weight`,
+            sql:  `INSERT INTO call_graph (id, caller, callee, caller_file, callee_file, call_line, weight, kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(caller, callee, caller_file, kind) DO UPDATE SET weight = weight + excluded.weight`,
             args: [
               randomUUID(), caller, callee, relPath,
               meta.callee_file ?? null,
               meta.call_line,
               meta.weight,
+              meta.kind,
             ],
           };
         }),

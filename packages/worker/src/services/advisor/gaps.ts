@@ -18,7 +18,8 @@ export type GapType =
   | "zombie_deferred"
   | "supersession_conflict"
   | "unreviewed_template_records"
-  | "unresolved_conflict";
+  | "unresolved_conflict"
+  | "uncovered_symbol";
 
 export interface KnowledgeGap {
   type: GapType;
@@ -421,6 +422,41 @@ export async function analyseKnowledgeGaps(
       score: 15,
       age_days: daysContested,
     });
+  }
+
+  // 12. uncovered_symbol — high-caller production symbols with no test_covers edges
+  const structuralPath = join(cwd, ".codegraph", "structural.db");
+  if (existsSync(structuralPath) && isAbsolute(cwd)) {
+    const sdb = getStructuralClient(structuralPath);
+    if (sdb) {
+      try {
+        const uncoveredRes = await sdb.execute({
+          sql: `SELECT name, file, test_count, caller_count FROM (
+                  SELECT s.name, s.file,
+                    (SELECT COUNT(*) FROM call_graph cg WHERE cg.callee = s.name AND cg.kind = 'test_covers') as test_count,
+                    (SELECT COUNT(*) FROM call_graph cg2 WHERE cg2.callee = s.name AND cg2.kind = 'calls') as caller_count
+                  FROM symbols s
+                  WHERE s.is_test = 0
+                ) WHERE test_count = 0 AND caller_count >= 3
+                ORDER BY caller_count DESC
+                LIMIT 5`,
+          args: [],
+        });
+        for (const row of uncoveredRes.rows) {
+          const r = row as Record<string, unknown>;
+          const sym = String(r["name"]);
+          const callerCount = Number(r["caller_count"] ?? 0);
+          gaps.push({
+            type: "uncovered_symbol",
+            description: `Symbol \`${sym}\` has ${callerCount} callers but no test coverage (no test_covers edges).`,
+            symbol: sym,
+            score: callerCount >= 5 ? 10 : 7,
+            capture_hint: `Add a test that calls \`${sym}\` to create a test_covers edge`,
+            estimated_effort: "hours",
+          });
+        }
+      } catch { /* structural db may not have kind column yet */ }
+    }
   }
 
   // Partition and score

@@ -19,6 +19,7 @@ export interface ParsedCallSite {
   caller:    string;
   callee:    string;
   call_line: number;
+  kind:      "calls" | "test_covers";
 }
 
 export interface ParsedFile {
@@ -152,7 +153,7 @@ export async function parseFile(filePath: string): Promise<ParsedFile | null> {
 
   let currentClass: string | null = null;
 
-  function walk(node: Parser.SyntaxNode, currentSymbol?: string): void {
+  function walk(node: Parser.SyntaxNode, currentSymbol?: string, currentSymbolIsTest?: boolean): void {
     switch (node.type) {
 
       // Import declarations ─────────────────────────────────────────────────
@@ -191,8 +192,8 @@ export async function parseFile(filePath: string): Promise<ParsedFile | null> {
             exported:   isExported(node),
             is_test:    false,
           });
-          // Walk class body
-          for (const child of node.children) walk(child, currentSymbol);
+          // Walk class body — class itself is not a test scope
+          for (const child of node.children) walk(child, currentSymbol, currentSymbolIsTest);
           currentClass = null;
           return;
         }
@@ -215,7 +216,7 @@ export async function parseFile(filePath: string): Promise<ParsedFile | null> {
             is_test:    isTestFn,
             parent:     currentClass ?? undefined,
           });
-          for (const child of node.children) walk(child, name);
+          for (const child of node.children) walk(child, name, isTestFn);
           return;
         }
         break;
@@ -236,7 +237,7 @@ export async function parseFile(filePath: string): Promise<ParsedFile | null> {
             is_test:    isTestFn,
             parent:     currentClass ?? undefined,
           });
-          for (const child of node.children) walk(child, name);
+          for (const child of node.children) walk(child, name, isTestFn);
           return;
         }
         break;
@@ -264,7 +265,7 @@ export async function parseFile(filePath: string): Promise<ParsedFile | null> {
                 is_test:    isTestFn,
                 parent:     currentClass ?? undefined,
               });
-              for (const c of valueNode.children) walk(c, name);
+              for (const c of valueNode.children) walk(c, name, isTestFn);
               return;
             }
           }
@@ -324,10 +325,13 @@ export async function parseFile(filePath: string): Promise<ParsedFile | null> {
               calleeName.length > 2 &&
               /^[a-zA-Z_$]/.test(calleeName)
             ) {
+              // Edge kind: test_covers when the enclosing symbol is a test function
+              const isTestCaller = currentSymbolIsTest ?? isTest;
               calls.push({
                 caller:    currentSymbol,
                 callee:    calleeName,
                 call_line: node.startPosition.row + 1,
+                kind:      isTestCaller ? "test_covers" : "calls",
               });
             }
           }
@@ -338,7 +342,7 @@ export async function parseFile(filePath: string): Promise<ParsedFile | null> {
 
     // Continue walking children
     for (const child of node.children) {
-      walk(child, currentSymbol);
+      walk(child, currentSymbol, currentSymbolIsTest);
     }
   }
 

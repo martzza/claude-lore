@@ -6,6 +6,14 @@ are explicitly marked `[inferred]`.
 
 ---
 
+## Before generating any document
+
+When given a task description or symbol to document, first call `get_minimal_context(task, repo)`
+to retrieve compact reasoning context (callers, callees, decisions, test coverage) in under 300 tokens.
+Use that context to ground the document before calling additional tools.
+
+---
+
 ## Document types and tool sequences
 
 ### /doc runbook [repo]

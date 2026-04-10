@@ -25,7 +25,7 @@ const _mcpStats: McpStats = {
   totalCalls: 0,
   lastCallAt: null,
   callsToday: 0,
-  toolCount:  35,
+  toolCount:  37,
 };
 
 let _todayDate = new Date().toDateString();
@@ -58,6 +58,7 @@ export function createMcpServer(): McpServer {
   // Wrap the server's tool call dispatch to track stats.
   // McpServer exposes a `tool` registration method; we intercept calls via the
   // request handler by patching the internal _requestHandlers map after setup.
+  registerStructuralTools(server);
   registerReasoningTools(server);
   registerSessionTools(server);
   registerPersonalTools(server);
@@ -66,7 +67,6 @@ export function createMcpServer(): McpServer {
   registerGraphTools(server);
   registerAnnotationTools(server);
   registerReviewTools(server);
-  registerStructuralTools(server);
   registerCompressionTools(server);
 
   // Patch the tools/call handler to increment counters on every invocation.
