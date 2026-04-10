@@ -1,15 +1,17 @@
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { join, isAbsolute } from "path";
+import { tmpdir } from "os";
 
 const BASE_URL = "http://127.0.0.1:37778";
 
 interface WikiPage {
   community_id:   string;
   community_name: string;
+  description:    string;
   hub_symbol:     string | null;
   size:           number;
   files:          string[];
-  symbols:        Array<{ name: string; file: string; kind: string; exported: boolean; is_test: boolean; start_line: number }>;
+  symbols:        Array<{ name: string; file: string; kind: string; exported: boolean; is_test: boolean; start_line: number; line: number }>;
   decisions:      Array<{ id: string; content: string; confidence: string; symbol: string | null }>;
   risks:          Array<{ id: string; content: string; confidence: string; symbol: string | null }>;
   deferred:       Array<{ id: string; content: string; confidence: string; symbol: string | null; status: string }>;
@@ -102,7 +104,8 @@ function renderPageMarkdown(page: WikiPage): string {
   lines.push("| Symbol | File | Kind | Exported | Test |");
   lines.push("|--------|------|------|----------|------|");
   for (const sym of page.symbols.slice(0, 50)) {
-    lines.push(`| \`${sym.name}\` | \`${sym.file}:${sym.start_line}\` | ${sym.kind} | ${sym.exported ? "✓" : ""} | ${sym.is_test ? "✓" : ""} |`);
+    const line = sym.line ?? sym.start_line;
+    lines.push(`| \`${sym.name}\` | \`${sym.file}:${line}\` | ${sym.kind} | ${sym.exported ? "✓" : ""} | ${sym.is_test ? "✓" : ""} |`);
   }
   if (page.symbols.length > 50) lines.push(`| *(${page.symbols.length - 50} more)* | | | | |`);
   lines.push("");
@@ -116,8 +119,7 @@ export async function runWiki(opts: {
   output?:    string;
   open?:      boolean;
 }): Promise<void> {
-  const cwd    = process.cwd();
-  const format = opts.format ?? "md";
+  const cwd = process.cwd();
 
   // Validate structural index exists
   if (!existsSync(join(cwd, ".codegraph", "structural.db"))) {
@@ -125,69 +127,135 @@ export async function runWiki(opts: {
     process.exit(1);
   }
 
-  const params = new URLSearchParams({ cwd, repo: cwd, format: "json" });
-  if (opts.community) params.set("community", opts.community);
+  // Default: HTML + open browser (unless --format md is explicit)
+  const wantsMarkdown = opts.format === "md";
 
-  let data: WikiResponse | { community: WikiPage | null };
+  // --output dir: write HTML files (or md if --format md)
+  if (opts.output) {
+    const params = new URLSearchParams({ cwd, repo: cwd, format: "json" });
+    if (opts.community) params.set("community", opts.community);
 
+    let data: WikiResponse | { community: WikiPage | null };
+    try {
+      const res = await fetch(`${BASE_URL}/api/structural/wiki?${params}`);
+      if (!res.ok) {
+        const body = await res.text();
+        console.error(`✗ Worker error (${res.status}):`, body);
+        process.exit(1);
+      }
+      data = await res.json() as typeof data;
+    } catch (err) {
+      console.error("✗ Could not reach worker:", err);
+      console.error("  Is the worker running? Try: claude-lore worker start");
+      process.exit(1);
+    }
+
+    let pages: WikiPage[];
+    if ("community" in data) {
+      if (!data.community) {
+        console.error(`✗ Community '${opts.community}' not found.`);
+        process.exit(1);
+      }
+      pages = [data.community];
+    } else {
+      pages = data.pages;
+    }
+
+    const dir = isAbsolute(opts.output) ? opts.output : join(cwd, opts.output);
+    mkdirSync(dir, { recursive: true });
+
+    if (wantsMarkdown) {
+      writeFileSync(join(dir, "index.md"), renderIndexMarkdown(pages), "utf8");
+      for (const page of pages) {
+        writeFileSync(join(dir, `${page.community_id}.md`), renderPageMarkdown(page), "utf8");
+      }
+      console.log(`✓ Wiki written to ${dir}/`);
+      console.log(`  index.md + ${pages.length} community page${pages.length !== 1 ? "s" : ""}`);
+      if (opts.open) {
+        const { execSync } = await import("child_process");
+        try { execSync(`open ${JSON.stringify(join(dir, "index.md"))}`); } catch { /* ok */ }
+      }
+    } else {
+      // Fetch HTML from worker
+      const htmlParams = new URLSearchParams({ cwd, repo: cwd, format: "html" });
+      const htmlRes = await fetch(`${BASE_URL}/api/structural/wiki?${htmlParams}`);
+      const html = await htmlRes.text();
+      writeFileSync(join(dir, "index.html"), html, "utf8");
+      console.log(`✓ Wiki written to ${join(dir, "index.html")}`);
+      if (opts.open) {
+        const { execSync } = await import("child_process");
+        try { execSync(`open ${JSON.stringify(join(dir, "index.html"))}`); } catch { /* ok */ }
+      }
+    }
+    return;
+  }
+
+  // Markdown stdout mode: --format md
+  if (wantsMarkdown) {
+    const params = new URLSearchParams({ cwd, repo: cwd, format: "json" });
+    if (opts.community) params.set("community", opts.community);
+
+    let data: WikiResponse | { community: WikiPage | null };
+    try {
+      const res = await fetch(`${BASE_URL}/api/structural/wiki?${params}`);
+      if (!res.ok) {
+        const body = await res.text();
+        console.error(`✗ Worker error (${res.status}):`, body);
+        process.exit(1);
+      }
+      data = await res.json() as typeof data;
+    } catch (err) {
+      console.error("✗ Could not reach worker:", err);
+      console.error("  Is the worker running? Try: claude-lore worker start");
+      process.exit(1);
+    }
+
+    let pages: WikiPage[];
+    if ("community" in data) {
+      if (!data.community) {
+        console.error(`✗ Community '${opts.community}' not found.`);
+        process.exit(1);
+      }
+      pages = [data.community];
+    } else {
+      pages = data.pages;
+    }
+
+    if (opts.community) {
+      process.stdout.write(renderPageMarkdown(pages[0]!));
+    } else {
+      process.stdout.write(renderIndexMarkdown(pages));
+      process.stdout.write("\n");
+      for (const page of pages) {
+        process.stdout.write("\n---\n\n");
+        process.stdout.write(renderPageMarkdown(page));
+      }
+    }
+    return;
+  }
+
+  // Default: HTML → temp file → open browser
+  const htmlParams = new URLSearchParams({ cwd, repo: cwd, format: "html" });
+  let html: string;
   try {
-    const res = await fetch(`${BASE_URL}/api/structural/wiki?${params}`);
+    const res = await fetch(`${BASE_URL}/api/structural/wiki?${htmlParams}`);
     if (!res.ok) {
       const body = await res.text();
       console.error(`✗ Worker error (${res.status}):`, body);
       process.exit(1);
     }
-    data = await res.json() as typeof data;
+    html = await res.text();
   } catch (err) {
     console.error("✗ Could not reach worker:", err);
     console.error("  Is the worker running? Try: claude-lore worker start");
     process.exit(1);
   }
 
-  // Extract pages
-  let pages: WikiPage[];
-  if ("community" in data) {
-    if (!data.community) {
-      console.error(`✗ Community '${opts.community}' not found.`);
-      process.exit(1);
-    }
-    pages = [data.community];
-  } else {
-    pages = data.pages;
-  }
+  const tmpFile = join(tmpdir(), `claude-lore-wiki-${Date.now()}.html`);
+  writeFileSync(tmpFile, html, "utf8");
+  console.log(`✓ Wiki generated — opening in browser`);
+  console.log(`  ${tmpFile}`);
 
-  // Output mode: --output dir
-  if (opts.output) {
-    const dir = isAbsolute(opts.output) ? opts.output : join(cwd, opts.output);
-    mkdirSync(dir, { recursive: true });
-
-    const indexMd = renderIndexMarkdown(pages);
-    writeFileSync(join(dir, "index.md"), indexMd, "utf8");
-
-    for (const page of pages) {
-      const md = renderPageMarkdown(page);
-      writeFileSync(join(dir, `${page.community_id}.md`), md, "utf8");
-    }
-
-    console.log(`✓ Wiki written to ${dir}/`);
-    console.log(`  index.md + ${pages.length} community page${pages.length !== 1 ? "s" : ""}`);
-
-    if (opts.open) {
-      const { execSync } = await import("child_process");
-      try { execSync(`open ${JSON.stringify(join(dir, "index.md"))}`); } catch { /* ok */ }
-    }
-    return;
-  }
-
-  // Stdout mode
-  if (opts.community) {
-    process.stdout.write(renderPageMarkdown(pages[0]!));
-  } else {
-    process.stdout.write(renderIndexMarkdown(pages));
-    process.stdout.write("\n");
-    for (const page of pages) {
-      process.stdout.write("\n---\n\n");
-      process.stdout.write(renderPageMarkdown(page));
-    }
-  }
+  const { execSync } = await import("child_process");
+  try { execSync(`open ${JSON.stringify(tmpFile)}`); } catch { /* ok */ }
 }

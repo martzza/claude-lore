@@ -60,6 +60,8 @@ function printGroupedHelp(): void {
   console.log("  graph decisions      Decision hierarchy (Mermaid / interactive D3)");
   console.log("  graph symbol <name>  Impact map for a symbol");
   console.log("  graph portfolio      Cross-repo dependency map");
+  console.log("  wiki                 Interactive HTML community wiki — opens in browser");
+  console.log("    wiki --format md     Markdown to stdout instead");
   console.log("  annotate <file>      Source file with reasoning overlay");
   console.log("  provenance <symbol>  How a symbol came to exist");
   console.log("  coverage             Annotation coverage for this repo\n");

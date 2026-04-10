@@ -11,6 +11,11 @@ export interface WikiSymbol {
   exported: boolean;
   is_test: boolean;
   start_line: number;
+  line: number;           // alias for start_line
+  callers: string[];      // direct callers (capped at 10)
+  callees: string[];      // direct callees (capped at 5)
+  risk_score: number;     // 0–90 heuristic from caller count
+  has_reasoning: boolean; // true if appears in any decision or risk
 }
 
 export interface WikiDecision {
@@ -41,6 +46,7 @@ export interface WikiDeferred {
 export interface WikiPage {
   community_id: string;
   community_name: string;
+  description: string;
   hub_symbol: string | null;
   size: number;
   files: string[];
@@ -80,7 +86,7 @@ export async function generateWiki(
 ): Promise<WikiPage[]> {
   // Fetch all communities
   const commResult = await structDb.execute(
-    "SELECT id, name, hub_symbol, size, files, symbols FROM communities ORDER BY size DESC"
+    "SELECT id, name, hub_symbol, size, files, symbols, description FROM communities ORDER BY size DESC"
   );
 
   const pages: WikiPage[] = [];
@@ -92,6 +98,7 @@ export async function generateWiki(
     const size          = row[3] as number;
     const filesJson     = row[4] as string;
     const symbolsJson   = row[5] as string;
+    const description   = (row[6] as string | null) ?? "";
 
     const files: string[]         = JSON.parse(filesJson);
     const symbolNames: string[]   = JSON.parse(symbolsJson);
@@ -108,6 +115,37 @@ export async function generateWiki(
       args: symbolNames,
     });
 
+    // Fetch batched callers and callees for all symbols in this community
+    const callersResult = await structDb.execute({
+      sql: `SELECT callee, caller FROM call_graph
+            WHERE kind = 'calls' AND callee IN (${placeholders})
+            LIMIT 2000`,
+      args: symbolNames,
+    });
+    const callerMap = new Map<string, string[]>();
+    for (const r of callersResult.rows) {
+      const callee = String(r["callee"]);
+      const caller = String(r["caller"]);
+      if (!callerMap.has(callee)) callerMap.set(callee, []);
+      const arr = callerMap.get(callee)!;
+      if (arr.length < 10) arr.push(caller);
+    }
+
+    const calleesResult = await structDb.execute({
+      sql: `SELECT caller, callee FROM call_graph
+            WHERE kind = 'calls' AND caller IN (${placeholders})
+            LIMIT 2000`,
+      args: symbolNames,
+    });
+    const calleeMap = new Map<string, string[]>();
+    for (const r of calleesResult.rows) {
+      const caller = String(r["caller"]);
+      const callee = String(r["callee"]);
+      if (!calleeMap.has(caller)) calleeMap.set(caller, []);
+      const arr = calleeMap.get(caller)!;
+      if (arr.length < 5) arr.push(callee);
+    }
+
     const symbols: WikiSymbol[] = symResult.rows.map(r => ({
       name:       r[0] as string,
       file:       r[1] as string,
@@ -115,6 +153,11 @@ export async function generateWiki(
       exported:   Boolean(r[3]),
       is_test:    Boolean(r[4]),
       start_line: r[5] as number,
+      line:       r[5] as number,
+      callers:    callerMap.get(r[0] as string) ?? [],
+      callees:    calleeMap.get(r[0] as string) ?? [],
+      risk_score: Math.min(90, (callerMap.get(r[0] as string)?.length ?? 0) * 5),
+      has_reasoning: false, // populated after decisions/risks are fetched
     }));
 
     // Count test coverage
@@ -241,9 +284,16 @@ export async function generateWiki(
       }
     }
 
+    // Mark symbols that appear in any decision or risk record
+    const reasoningSymbols = new Set<string>();
+    for (const d of decisions) if (d.symbol) reasoningSymbols.add(d.symbol);
+    for (const r of risks)     if (r.symbol) reasoningSymbols.add(r.symbol);
+    for (const sym of symbols) sym.has_reasoning = reasoningSymbols.has(sym.name);
+
     pages.push({
       community_id: communityId,
       community_name: communityName,
+      description,
       hub_symbol: hubSymbol,
       size,
       files,

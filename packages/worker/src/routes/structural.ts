@@ -7,6 +7,7 @@ import { buildIndex, getIndexStats, isIndexStale } from "../services/structural/
 import { getStructuralClient } from "../services/structural/db-cache.js";
 import { startWatch, stopWatch, isWatching } from "../services/structural/watcher.js";
 import { generateWiki, renderWikiPageMarkdown, renderWikiIndexMarkdown } from "../services/structural/wiki.js";
+import { renderWikiHtml } from "../services/structural/wiki-html.js";
 import { getWikiCache, setWikiCache, invalidateWikiCache, WIKI_CACHE_TTL_MS } from "../services/structural/wiki-cache.js";
 
 export { invalidateWikiCache };
@@ -414,6 +415,11 @@ router.get("/wiki", async (req, res) => {
     const filtered = community
       ? pages.filter(p => p.community_name === community || p.community_id === community)
       : pages;
+
+    if (format === "html") {
+      res.type("text/html").send(renderWikiHtml(pages));
+      return;
+    }
 
     if (format === "markdown") {
       if (community) {

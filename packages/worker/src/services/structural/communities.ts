@@ -2,6 +2,17 @@ import { createHash } from "crypto";
 import type { Client } from "@libsql/client";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const STDLIB_NAMES = new Set([
+  'join', 'resolve', 'has', 'get', 'set', 'now', 'log',
+  'push', 'map', 'filter', 'find', 'includes', 'split',
+  'keys', 'values', 'entries', 'assign', 'create', 'from',
+  'parse', 'stringify', 'toString', 'valueOf', 'call', 'apply',
+]);
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -93,7 +104,7 @@ export async function detectCommunities(
       symbols.map((s) => symbolFiles.get(s)).filter(Boolean) as string[],
     )];
 
-    const name = inferCommunityName(files, symbols);
+    const name = inferCommunityName(files, symbols, hubSymbol);
 
     communities.push({
       id:          generateCommunityId(symbols),
@@ -106,6 +117,29 @@ export async function detectCommunities(
     });
   }
 
+  // Deduplicate community names using hub symbol as suffix
+  const usedNames = new Map<string, number>();
+
+  for (const community of communities) {
+    const baseName = community.name;
+    const count    = usedNames.get(baseName) ?? 0;
+
+    if (count > 0) {
+      const hubSuffix = community.hub_symbol
+        ? community.hub_symbol
+            .replace(/([A-Z])/g, '-$1')
+            .toLowerCase()
+            .replace(/^-/, '')
+            .split('-')
+            .find(w => w.length > 3 && !STDLIB_NAMES.has(w))
+        : String(count + 1);
+
+      community.name = baseName + '-' + (hubSuffix ?? count + 1);
+    }
+
+    usedNames.set(baseName, count + 1);
+  }
+
   return communities.sort((a, b) => b.size - a.size);
 }
 
@@ -113,7 +147,7 @@ export async function detectCommunities(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function inferCommunityName(files: string[], symbols: string[]): string {
+function inferCommunityName(files: string[], symbols: string[], hubSymbol: string): string {
   if (files.length === 0) return "unknown";
 
   // Find common directory prefix
@@ -132,7 +166,7 @@ function inferCommunityName(files: string[], symbols: string[]): string {
 
   if (commonParts.length > 0) {
     const relevant = commonParts.filter(
-      (p) => !["src", "packages", "lib", "dist", "."].includes(p),
+      (p) => !["src", "packages", "lib", "dist", "."].includes(p) && !STDLIB_NAMES.has(p),
     );
     if (relevant.length > 0) return relevant[relevant.length - 1]!;
   }
@@ -140,12 +174,25 @@ function inferCommunityName(files: string[], symbols: string[]): string {
   // Fall back to most common word in symbol names
   const words = symbols
     .flatMap((s) => s.replace(/([A-Z])/g, " $1").toLowerCase().split(/\W+/))
-    .filter((w) => w.length > 3);
+    .filter((w) => w.length > 3 && !STDLIB_NAMES.has(w));
 
   const freq = new Map<string, number>();
   for (const w of words) freq.set(w, (freq.get(w) ?? 0) + 1);
   const topWord = [...freq.entries()].sort((a, b) => b[1] - a[1])[0];
-  return topWord ? topWord[0] : "community";
+  const inferredName = topWord ? topWord[0] : "community";
+
+  // If the inferred name matches a stdlib function, fall back to hub symbol words
+  if (STDLIB_NAMES.has(inferredName)) {
+    const hubWords = hubSymbol
+      .replace(/([A-Z])/g, ' $1')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(w => w.length > 3 && !STDLIB_NAMES.has(w));
+    if (hubWords.length > 0) return hubWords[0]!;
+    return hubSymbol.slice(0, 12);
+  }
+
+  return inferredName;
 }
 
 function generateCommunityId(symbols: string[]): string {

@@ -574,9 +574,9 @@ program
   .command("wiki")
   .description("Generate a community wiki from the structural index")
   .option("--community <name>", "Only generate wiki for this community name or id")
-  .option("--format <fmt>", "Output format: md (default)|html", "md")
-  .option("--output <dir>", "Write wiki files to this directory (one .md per community + index.md)")
-  .option("--open", "Open the generated index in the system viewer (requires --output)")
+  .option("--format <fmt>", "Output format: html (default, opens browser) | md (markdown to stdout)")
+  .option("--output <dir>", "Write wiki to this directory (index.html, or .md files with --format md)")
+  .option("--open", "Open generated wiki in browser (default behaviour without --format md)")
   .action(async (opts: { community?: string; format?: "md" | "html"; output?: string; open?: boolean }) => {
     const { runWiki } = await import("./commands/wiki.js");
     await runWiki(opts);

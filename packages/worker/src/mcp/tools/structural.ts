@@ -8,6 +8,7 @@ import { getStructuralClient } from "../../services/structural/db-cache.js";
 import { getReasoningData } from "../../services/reasoning/service.js";
 import { scoreChangedSymbols, getChangedSymbols, deriveVerdict } from "../../services/structural/risk-scorer.js";
 import { generateWiki, renderWikiPageMarkdown, renderWikiIndexMarkdown } from "../../services/structural/wiki.js";
+import { renderWikiHtml } from "../../services/structural/wiki-html.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -851,7 +852,7 @@ export function registerStructuralTools(server: McpServer): void {
     {
       repo:      z.string().optional().describe("Repo name (used to look up reasoning records). Defaults to cwd basename."),
       community: z.string().optional().describe("Filter to a specific community name or id. Omit for all communities."),
-      format:    z.enum(["json", "markdown"]).optional().describe("Output format. Default: json."),
+      format:    z.enum(["json", "markdown", "html"]).optional().describe("Output format. Default: json. Use html for self-contained interactive wiki page."),
     },
     async ({ repo, community, format = "json" }) => {
       const cwd = process.cwd();
@@ -871,6 +872,10 @@ export function registerStructuralTools(server: McpServer): void {
         const filtered = community
           ? pages.filter(p => p.community_name === community || p.community_id === community)
           : pages;
+
+        if (format === "html") {
+          return { content: [{ type: "text" as const, text: renderWikiHtml(pages) }] };
+        }
 
         if (format === "markdown") {
           let md: string;
