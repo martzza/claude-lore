@@ -89,8 +89,9 @@ function toHtmlPages(pages: WikiPage[]): HtmlPage[] {
 // Main export
 // ---------------------------------------------------------------------------
 
-export function renderWikiHtml(pages: WikiPage[]): string {
+export function renderWikiHtml(pages: WikiPage[], initialCommunity?: string): string {
   const dataJson = JSON.stringify(toHtmlPages(pages));
+  const initCommunityJson = JSON.stringify(initialCommunity ?? null);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -600,13 +601,19 @@ export function renderWikiHtml(pages: WikiPage[]): string {
 
 <script>
 const PAGES = ${dataJson};
+const INITIAL_COMMUNITY = ${initCommunityJson};
 let currentIdx = -1;
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 function boot() {
   buildSidebar();
-  showIndex();
+  if (INITIAL_COMMUNITY) {
+    const idx = PAGES.findIndex(p => p.community === INITIAL_COMMUNITY || p.community_id === INITIAL_COMMUNITY);
+    if (idx >= 0) { showCommunity(idx); } else { showIndex(); }
+  } else {
+    showIndex();
+  }
   document.getElementById('search').addEventListener('input', filterSidebar);
 }
 

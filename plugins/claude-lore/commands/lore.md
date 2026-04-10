@@ -1,7 +1,7 @@
 ---
 description: Query and write to the claude-lore knowledge graph. Use for /lore questions about decisions, risks, deferred work, session history, and cross-repo dependencies.
-argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol> | review-map | review-diff [--base <ref>] | review-propagation <file> | compress | audit | audit status | audit estimate
-allowed-tools: [Read, Glob, Grep, mcp__claude-lore__reasoning_get, mcp__claude-lore__reasoning_log, mcp__claude-lore__reasoning_pending, mcp__claude-lore__reasoning_confirm, mcp__claude-lore__reasoning_discard, mcp__claude-lore__session_load, mcp__claude-lore__session_search, mcp__claude-lore__personal_log, mcp__claude-lore__personal_get, mcp__claude-lore__portfolio_deps, mcp__claude-lore__portfolio_impact, mcp__claude-lore__get_lore_help, mcp__claude-lore__advisor_summary, mcp__claude-lore__parallelism_check, mcp__claude-lore__workflow_summary, mcp__claude-lore__session_handover, mcp__claude-lore__graph_decisions, mcp__claude-lore__graph_symbol, mcp__claude-lore__graph_portfolio, mcp__claude-lore__annotate_file, mcp__claude-lore__provenance_trace, mcp__claude-lore__annotation_coverage, mcp__claude-lore__review_map, mcp__claude-lore__review_propagation, mcp__claude-lore__review_diff, mcp__claude-lore__compress_session, mcp__claude-lore__submit_compression]
+argument-hint: <question> | help [command] | improve | workflow | parallel | skills | save <text> | log decision|risk|defer <text> | review | confirm <id> | status | bootstrap | graph | annotate <file> | provenance <symbol> | review-map | review-diff [--base <ref>] | review-propagation <file> | compress | audit | audit status | audit estimate | wiki [<community>]
+allowed-tools: [Read, Glob, Grep, mcp__claude-lore__reasoning_get, mcp__claude-lore__reasoning_log, mcp__claude-lore__reasoning_pending, mcp__claude-lore__reasoning_confirm, mcp__claude-lore__reasoning_discard, mcp__claude-lore__session_load, mcp__claude-lore__session_search, mcp__claude-lore__personal_log, mcp__claude-lore__personal_get, mcp__claude-lore__portfolio_deps, mcp__claude-lore__portfolio_impact, mcp__claude-lore__get_lore_help, mcp__claude-lore__advisor_summary, mcp__claude-lore__parallelism_check, mcp__claude-lore__workflow_summary, mcp__claude-lore__session_handover, mcp__claude-lore__graph_decisions, mcp__claude-lore__graph_symbol, mcp__claude-lore__graph_portfolio, mcp__claude-lore__annotate_file, mcp__claude-lore__provenance_trace, mcp__claude-lore__annotation_coverage, mcp__claude-lore__review_map, mcp__claude-lore__review_propagation, mcp__claude-lore__review_diff, mcp__claude-lore__compress_session, mcp__claude-lore__submit_compression, mcp__claude-lore__generate_wiki]
 ---
 
 # /lore — Knowledge Graph Interface
@@ -246,6 +246,31 @@ Calls `provenance_trace(symbol, repo)` via MCP.
 /lore provenance resolveIdentity
 /lore provenance buildContextString
 ```
+
+---
+
+### /lore wiki
+
+Opens the interactive architecture wiki in your browser.
+
+Calls `generate_wiki(repo)` via MCP. The wiki opens automatically in your default browser at `http://127.0.0.1:37778/wiki` — you can bookmark this URL for future use.
+
+**What you'll see:**
+- All code communities with symbol counts and coverage bars
+- Per-community: symbols, architectural decisions, risks, open deferred work
+- Click any symbol to see its callers, callees, and risk score
+- Arrow keys navigate between communities, Esc closes the symbol panel
+- Search box filters the community list
+
+**Usage:**
+```
+/lore wiki                    — open full wiki (all communities)
+/lore wiki services           — open wiki pre-selected to 'services' community
+/lore wiki build              — open wiki at the 'build' community
+```
+
+**In chat, just say:**
+"open the wiki", "show me the architecture", "what communities exist"
 
 ---
 

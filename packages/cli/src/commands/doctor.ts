@@ -203,6 +203,26 @@ async function checkWorker(): Promise<CheckResult[]> {
     });
   }
 
+  // Wiki check
+  try {
+    const wikiRes = await fetch(`${BASE_URL}/wiki?cwd=${encodeURIComponent(process.cwd())}`, { signal: AbortSignal.timeout(3000) });
+    results.push({
+      label: "Wiki",
+      status: wikiRes.ok ? "pass" : "warn",
+      detail: wikiRes.ok
+        ? `http://127.0.0.1:${PORT}/wiki`
+        : `Wiki responded with ${wikiRes.status} — run: claude-lore index`,
+      fix: wikiRes.ok ? undefined : "claude-lore index",
+    });
+  } catch {
+    results.push({
+      label: "Wiki",
+      status: "warn",
+      detail: `Wiki not responding — check worker`,
+      fix: "claude-lore worker restart",
+    });
+  }
+
   // MCP tool count via tools/list
   try {
     const mcpTs = join(loreRoot, "packages", "worker", "mcp.ts");

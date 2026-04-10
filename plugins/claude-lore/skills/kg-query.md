@@ -86,9 +86,11 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "/lore audit status" | `GET /api/audit/status?repo={cwd}` — last audit run stats |
 | "/lore audit estimate" | Direct to CLI: `claude-lore audit --estimate` — no API call needed |
 | "/lore compress" or "compress session / run compression" | `compress_session(repo)` → extract → `submit_compression(session_id, repo, extraction)` |
-| "/lore wiki" or "generate a wiki / show community pages" | `generate_wiki(repo, format="markdown")` — returns all community wiki pages |
-| "/lore wiki <community>" or "wiki for X community" | `generate_wiki(community=X, repo, format="markdown")` — single community page |
-| "what symbols are in the X module/community" | `generate_wiki(community=X, repo)` → extract `symbols` list |
+| "/lore wiki" or "open the wiki" or "show me the architecture" | `generate_wiki(repo)` — opens browser with interactive HTML wiki, returns URL |
+| "/lore wiki <community>" or "wiki for X community" | `generate_wiki(repo, community=X)` — opens wiki pre-selected to that community |
+| "what communities exist" or "list communities" | `codegraph_communities(repo)` then offer `generate_wiki(repo)` if user wants visual |
+| "what symbols are in the X module/community" | `generate_wiki(community=X, repo, format="json")` → extract `symbols` list |
+| "show community pages as text" | `generate_wiki(repo, format="markdown")` — returns Markdown to stdout |
 
 **If structural index not built** (`codegraph_*` returns `error: structural index not built`):
 → Fall back to `portfolio_impact` for blast radius

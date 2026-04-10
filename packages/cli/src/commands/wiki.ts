@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { join, isAbsolute } from "path";
-import { tmpdir } from "os";
 
 const BASE_URL = "http://127.0.0.1:37778";
 
@@ -234,28 +233,26 @@ export async function runWiki(opts: {
     return;
   }
 
-  // Default: HTML → temp file → open browser
-  const htmlParams = new URLSearchParams({ cwd, repo: cwd, format: "html" });
-  let html: string;
+  // Default: HTML → open worker URL in browser (bookmarkable, stays live)
+  const wikiParams = new URLSearchParams({ cwd, repo: cwd });
+  if (opts.community) wikiParams.set("community", opts.community);
+  const wikiUrl = `${BASE_URL}/wiki?${wikiParams}`;
+
+  // Verify worker is reachable
   try {
-    const res = await fetch(`${BASE_URL}/api/structural/wiki?${htmlParams}`);
-    if (!res.ok) {
-      const body = await res.text();
-      console.error(`✗ Worker error (${res.status}):`, body);
+    const probe = await fetch(wikiUrl, { signal: AbortSignal.timeout(3000) });
+    if (!probe.ok) {
+      console.error(`✗ Worker error (${probe.status}) — run: claude-lore worker start`);
       process.exit(1);
     }
-    html = await res.text();
-  } catch (err) {
-    console.error("✗ Could not reach worker:", err);
-    console.error("  Is the worker running? Try: claude-lore worker start");
+  } catch {
+    console.error("✗ Could not reach worker. Is it running? Try: claude-lore worker start");
     process.exit(1);
   }
 
-  const tmpFile = join(tmpdir(), `claude-lore-wiki-${Date.now()}.html`);
-  writeFileSync(tmpFile, html, "utf8");
-  console.log(`✓ Wiki generated — opening in browser`);
-  console.log(`  ${tmpFile}`);
+  console.log(`✓ Wiki ready — opening in browser`);
+  console.log(`  ${wikiUrl}`);
 
   const { execSync } = await import("child_process");
-  try { execSync(`open ${JSON.stringify(tmpFile)}`); } catch { /* ok */ }
+  try { execSync(`open ${JSON.stringify(wikiUrl)}`); } catch { /* ok */ }
 }

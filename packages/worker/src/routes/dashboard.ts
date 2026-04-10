@@ -1,12 +1,18 @@
 import { Router } from "express";
-import { isAbsolute, resolve } from "path";
+import { join, isAbsolute, resolve } from "path";
+import { homedir } from "os";
+import { existsSync } from "fs";
 import { execFileSync } from "child_process";
+import { createClient } from "@libsql/client";
 import { getMcpStats } from "../mcp/server.js";
 import { checkVersion } from "../services/dashboard/version-check.js";
 import { assembleSummary } from "../services/dashboard/summary.js";
 import { renderDashboard } from "../services/dashboard/renderer.js";
 import { analyseKnowledgeGaps } from "../services/advisor/gaps.js";
 import { registryDb } from "../services/sqlite/db.js";
+import { generateWiki } from "../services/structural/wiki.js";
+import { renderWikiHtml } from "../services/structural/wiki-html.js";
+import { getWikiCache, setWikiCache, WIKI_CACHE_TTL_MS } from "../services/structural/wiki-cache.js";
 
 const router = Router();
 
@@ -25,6 +31,60 @@ router.get("/dashboard", async (_req, res) => {
     res.send(html);
   } catch (err) {
     res.status(500).send(`<pre>Dashboard error: ${String(err)}</pre>`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /wiki?cwd=&repo=&community=   — interactive HTML wiki (bookmarkable)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function serveWiki(
+  cwd: string,
+  repo: string,
+  community: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  const structDbPath   = join(cwd, ".codegraph", "structural.db");
+  const sessionsDbPath = join(homedir(), ".codegraph", "sessions.db");
+
+  if (!existsSync(structDbPath)) {
+    res.status(404).send(
+      "<html><body style='background:#0f1117;color:#e2e8f0;font-family:sans-serif;padding:40px'>" +
+      "<h2>Structural index not built</h2><p>Run <code>claude-lore index</code> to index this repo.</p></body></html>"
+    );
+    return;
+  }
+
+  const cached = getWikiCache(cwd);
+  let pages: Awaited<ReturnType<typeof generateWiki>>;
+
+  if (cached && Date.now() - cached.generatedAt < WIKI_CACHE_TTL_MS) {
+    pages = cached.pages;
+  } else {
+    const structDb = createClient({ url: `file:${structDbPath}` });
+    const reasonDb = createClient({ url: `file:${sessionsDbPath}` });
+    pages = await generateWiki(structDb, reasonDb, repo);
+    setWikiCache(cwd, pages);
+  }
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(renderWikiHtml(pages, community));
+}
+
+router.get("/wiki", async (req, res) => {
+  const cwd       = String(req.query["cwd"] ?? process.cwd());
+  const repo      = String(req.query["repo"] ?? cwd);
+  const community = req.query["community"] ? String(req.query["community"]) : undefined;
+
+  if (!isAbsolute(cwd) || resolve(cwd) !== cwd) {
+    res.status(400).send("cwd must be absolute");
+    return;
+  }
+
+  try {
+    await serveWiki(cwd, repo, community, res);
+  } catch (err) {
+    res.status(500).send(`<pre>Wiki error: ${String(err)}</pre>`);
   }
 });
 

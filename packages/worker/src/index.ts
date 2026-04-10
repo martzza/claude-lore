@@ -61,6 +61,7 @@ async function main(): Promise<void> {
       graph: { enabled: true },
       structural,
       dashboard: { url: `http://127.0.0.1:${PORT}/dashboard` },
+      wiki:      { url: `http://127.0.0.1:${PORT}/wiki` },
     });
   });
 

@@ -848,63 +848,113 @@ export function registerStructuralTools(server: McpServer): void {
 
   server.tool(
     "generate_wiki",
-    "Generate a wiki for the codebase structured by community. Returns community pages with symbols, decisions, risks, and deferred work. Use community= to get a single community page. format=markdown returns rendered Markdown.",
+    `Generate and open the architecture wiki in your browser.
+Returns a URL to the interactive dark-theme wiki showing all code
+communities, their symbols, decisions, risks, and test coverage.
+
+Use this when you need to:
+- Understand the codebase architecture at a glance
+- Find which community a symbol belongs to
+- See all decisions and risks for a module
+- Check test coverage across the codebase
+
+The wiki opens automatically in your browser.
+For a specific community: generate_wiki({ community: "services" })
+For markdown output: generate_wiki({ format: "markdown" })`,
     {
       repo:      z.string().optional().describe("Repo name (used to look up reasoning records). Defaults to cwd basename."),
-      community: z.string().optional().describe("Filter to a specific community name or id. Omit for all communities."),
-      format:    z.enum(["json", "markdown", "html"]).optional().describe("Output format. Default: json. Use html for self-contained interactive wiki page."),
+      community: z.string().optional().describe("Navigate directly to this community name or id on open. Omit for full wiki."),
+      format:    z.enum(["url", "markdown", "json"]).optional().describe("Output format. Default: url (opens browser and returns link). Use markdown for text output, json for raw data."),
     },
-    async ({ repo, community, format = "json" }) => {
-      const cwd = process.cwd();
+    async ({ repo, community, format = "url" }) => {
+      const cwd    = process.cwd();
       const repoId = repo ?? cwd;
-      const structDbPath  = join(cwd, ".codegraph", "structural.db");
-      const sessionsDbPath = join(homedir(), ".codegraph", "sessions.db");
+      const PORT   = parseInt(process.env["CLAUDE_LORE_PORT"] ?? "37778", 10);
 
-      if (!existsSync(structDbPath)) {
-        return notIndexedError();
+      // markdown and json formats: generate pages from DB directly
+      if (format === "markdown" || format === "json") {
+        const structDbPath   = join(cwd, ".codegraph", "structural.db");
+        const sessionsDbPath = join(homedir(), ".codegraph", "sessions.db");
+
+        if (!existsSync(structDbPath)) {
+          return notIndexedError();
+        }
+
+        try {
+          const structDb = createClient({ url: `file:${structDbPath}` });
+          const reasonDb = createClient({ url: `file:${sessionsDbPath}` });
+          const pages    = await generateWiki(structDb, reasonDb, repoId);
+
+          const filtered = community
+            ? pages.filter(p => p.community_name === community || p.community_id === community)
+            : pages;
+
+          if (format === "markdown") {
+            let md: string;
+            if (community) {
+              if (filtered.length === 0) {
+                return { content: [{ type: "text" as const, text: `Community '${community}' not found.` }] };
+              }
+              md = renderWikiPageMarkdown(filtered[0]!);
+            } else {
+              md = renderWikiIndexMarkdown(pages) + "\n\n---\n\n" + pages.map(renderWikiPageMarkdown).join("\n\n---\n\n");
+            }
+            return { content: [{ type: "text" as const, text: md }] };
+          }
+
+          // JSON
+          const result = community
+            ? { community: filtered[0] ?? null }
+            : {
+                communities:   pages.length,
+                total_symbols: pages.reduce((n, p) => n + p.size, 0),
+                generated_at:  pages[0]?.generated_at ?? Date.now(),
+                pages:         filtered,
+              };
+          return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: msg }) }] };
+        }
       }
+
+      // Default: url — open worker-served wiki in browser, return URL
+      const params = new URLSearchParams({ cwd, repo: repoId });
+      if (community) params.set("community", community);
+      const url = `http://127.0.0.1:${PORT}/wiki?${params}`;
 
       try {
-        const structDb = createClient({ url: `file:${structDbPath}` });
-        const reasonDb = createClient({ url: `file:${sessionsDbPath}` });
-        const pages    = await generateWiki(structDb, reasonDb, repoId);
+        const { execFileSync } = await import("child_process");
+        const opener = process.platform === "darwin" ? "open"
+          : process.platform === "win32" ? "start"
+          : "xdg-open";
+        execFileSync(opener, [url], { timeout: 3000 });
+      } catch { /* browser open is best-effort */ }
 
-        const filtered = community
-          ? pages.filter(p => p.community_name === community || p.community_id === community)
-          : pages;
-
-        if (format === "html") {
-          return { content: [{ type: "text" as const, text: renderWikiHtml(pages) }] };
+      // Count communities and symbols from DB for the summary message
+      let communityCount = 0;
+      let symbolCount    = 0;
+      let communityNames: string[] = [];
+      try {
+        const structDbPath = join(cwd, ".codegraph", "structural.db");
+        if (existsSync(structDbPath)) {
+          const structDb = createClient({ url: `file:${structDbPath}` });
+          const reasonDb = createClient({ url: `file:${join(homedir(), ".codegraph", "sessions.db")}` });
+          const pages = await generateWiki(structDb, reasonDb, repoId);
+          communityCount = pages.length;
+          symbolCount    = pages.reduce((n, p) => n + p.symbols.length, 0);
+          communityNames = pages.map(p => p.community_name);
         }
+      } catch { /* ok — still return URL */ }
 
-        if (format === "markdown") {
-          let md: string;
-          if (community) {
-            if (filtered.length === 0) {
-              return { content: [{ type: "text" as const, text: `Community '${community}' not found.` }] };
-            }
-            md = renderWikiPageMarkdown(filtered[0]!);
-          } else {
-            md = renderWikiIndexMarkdown(pages) + "\n\n---\n\n" + pages.map(renderWikiPageMarkdown).join("\n\n---\n\n");
-          }
-          return { content: [{ type: "text" as const, text: md }] };
-        }
+      const result = {
+        url,
+        message: `Wiki opened in browser. ${communityCount} communities, ${symbolCount} symbols.` +
+                 (community ? ` Showing community: ${community}` : ""),
+        communities: communityNames,
+      };
 
-        // JSON
-        const result = community
-          ? { community: filtered[0] ?? null }
-          : {
-              communities:   pages.length,
-              total_symbols: pages.reduce((n, p) => n + p.size, 0),
-              generated_at:  pages[0]?.generated_at ?? Date.now(),
-              pages:         filtered,
-            };
-
-        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [{ type: "text" as const, text: JSON.stringify({ error: msg }) }] };
-      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     },
   );
 }
