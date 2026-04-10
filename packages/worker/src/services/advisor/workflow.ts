@@ -10,7 +10,8 @@ export type PatternType =
   | "late_session_deferral"
   | "blast_radius_order"
   | "unconfirmed_accumulation"
-  | "skill_usage_gap";
+  | "skill_usage_gap"
+  | "no_lifecycle_review";
 
 export interface WorkflowPattern {
   type: PatternType;
@@ -281,6 +282,19 @@ function buildRecommendations(
     });
   }
 
+  const noReview = patternMap.get("no_lifecycle_review");
+  if (noReview) {
+    recs.push({
+      priority: "medium",
+      category: "sequencing",
+      title: "Schedule a lifecycle review",
+      detail:
+        `Records accumulate faster than they're confirmed. A 15-minute review session ` +
+        `would address the backlog. Run: claude-lore review`,
+      rationale: noReview.description,
+    });
+  }
+
   // If session count is high and no review has happened, suggest batching reviews
   if (sessions.length >= 10 && !patternMap.has("unconfirmed_accumulation")) {
     recs.push({
@@ -404,6 +418,33 @@ export async function analyseWorkflow(
 
   const unconfirmed = await detectUnconfirmedAccumulation(repo, sessions);
   if (unconfirmed) patterns.push(unconfirmed);
+
+  // Lifecycle review cadence — no records reviewed in the last 30 days
+  const lastReviewRes = await sessionsDb.execute({
+    sql: `SELECT MAX(last_reviewed_at) as latest
+          FROM (
+            SELECT last_reviewed_at FROM decisions WHERE repo = ?
+            UNION ALL
+            SELECT last_reviewed_at FROM risks WHERE repo = ?
+            UNION ALL
+            SELECT last_reviewed_at FROM deferred_work WHERE repo = ?
+          )`,
+    args: [repo, repo, repo],
+  });
+  const lastReviewedAt = (lastReviewRes.rows[0] as Record<string, unknown>)["latest"];
+  const lastReviewSec = lastReviewedAt != null ? Number(lastReviewedAt) : null;
+  const daysSinceReview = lastReviewSec != null
+    ? (Date.now() / 1000 - lastReviewSec) / 86400
+    : Infinity;
+
+  if (daysSinceReview > 30) {
+    patterns.push({
+      type: "no_lifecycle_review",
+      frequency: 1,
+      description: `No records have been reviewed in ${Math.round(daysSinceReview) === Infinity ? "ever" : Math.round(daysSinceReview) + " days"}`,
+      impact: "negative",
+    });
+  }
 
   const recommendations = buildRecommendations(patterns, sessions);
 

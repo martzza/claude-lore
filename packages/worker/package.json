@@ -1,6 +1,6 @@
 {
   "name": "@claude-lore/worker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,10 +9,11 @@
     "build": "bun build src/index.ts --outdir dist --target node"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.36.0",
     "@libsql/client": "^0.14.0",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "express": "^4.21.0",
+    "tree-sitter-wasms": "0.1.11",
+    "web-tree-sitter": "0.21.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

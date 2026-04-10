@@ -53,9 +53,6 @@ importers:
 
   packages/worker:
     dependencies:
-      '@anthropic-ai/sdk':
-        specifier: ^0.36.0
-        version: 0.36.3
       '@libsql/client':
         specifier: ^0.14.0
         version: 0.14.0
@@ -65,6 +62,12 @@ importers:
       express:
         specifier: ^4.21.0
         version: 4.22.1
+      tree-sitter-wasms:
+        specifier: 0.1.11
+        version: 0.1.11
+      web-tree-sitter:
+        specifier: 0.21.0
+        version: 0.21.0
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -709,6 +712,9 @@ packages:
   tr46@0.0.3:
     resolution: {integrity: sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==}
 
+  tree-sitter-wasms@0.1.11:
+    resolution: {integrity: sha512-26sE4+qoTi1CbzHdo9sHs9pRE/jXVFVRigSG/5TNAbwhSMVjHfMAg4UjmOhAFAIx5UxgoQuaURwqhm0SRNrpWA==}
+
   type-is@1.6.18:
     resolution: {integrity: sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==}
     engines: {node: '>= 0.6'}
@@ -747,6 +753,9 @@ packages:
   web-streams-polyfill@4.0.0-beta.3:
     resolution: {integrity: sha512-QW95TCTaHmsYfHDybGMwO5IJIM93I/6vTRk+daHTWFPhwh+C8Cg7j7XyKrwrj8Ib6vYXe0ocYNrmzY4xAAN6ug==}
     engines: {node: '>= 14'}
+
+  web-tree-sitter@0.21.0:
+    resolution: {integrity: sha512-iJ+QJ6ikN9D9cG7Kh6q3KtAstYFUQbYZ8OjuPEJYWfj2kLrmp5I3C2n6WjE1Y3jvj7nJbkcrJytJGWUEhCxn+g==}
 
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
@@ -1517,6 +1526,8 @@ snapshots:
 
   tr46@0.0.3: {}
 
+  tree-sitter-wasms@0.1.11: {}
+
   type-is@1.6.18:
     dependencies:
       media-typer: 0.3.0
@@ -1543,6 +1554,8 @@ snapshots:
   web-streams-polyfill@3.3.3: {}
 
   web-streams-polyfill@4.0.0-beta.3: {}
+
+  web-tree-sitter@0.21.0: {}
 
   webidl-conversions@3.0.1: {}
 

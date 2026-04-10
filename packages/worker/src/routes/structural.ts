@@ -2,6 +2,7 @@ import { Router } from "express";
 import { join, isAbsolute, resolve } from "path";
 import { buildIndex, getIndexStats, isIndexStale } from "../services/structural/indexer.js";
 import { getStructuralClient } from "../services/structural/db-cache.js";
+import { startWatch, stopWatch, isWatching } from "../services/structural/watcher.js";
 
 const router = Router();
 
@@ -320,6 +321,48 @@ router.get("/impact", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/structural/watch/start  { repo, cwd }
+// POST /api/structural/watch/stop   { repo }
+// GET  /api/structural/watch/status?repo=
+// ---------------------------------------------------------------------------
+
+router.post("/watch/start", async (req, res) => {
+  const { repo, cwd } = req.body as { repo?: string; cwd?: string };
+
+  if (!cwd || !isAbsolute(cwd) || resolve(cwd) !== cwd) {
+    res.status(400).json({ error: "cwd must be an absolute, non-traversal path" });
+    return;
+  }
+
+  const repoName = repo ?? cwd;
+  try {
+    await startWatch(repoName, cwd);
+    res.json({ ok: true, watching: true, repo: repoName });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+router.post("/watch/stop", async (req, res) => {
+  const { repo } = req.body as { repo?: string };
+  if (!repo) {
+    res.status(400).json({ error: "repo is required" });
+    return;
+  }
+  stopWatch(repo);
+  res.json({ ok: true, watching: false, repo });
+});
+
+router.get("/watch/status", (req, res) => {
+  const repo = String(req.query["repo"] ?? "");
+  if (!repo) {
+    res.status(400).json({ error: "repo is required" });
+    return;
+  }
+  res.json({ watching: isWatching(repo), repo });
 });
 
 export default router;

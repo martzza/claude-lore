@@ -81,6 +81,7 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "/lore audit" or "review audit gaps" | `GET /api/records/pending?audit_only=true` — audit gap queue review (see audit skill) |
 | "/lore audit status" | `GET /api/audit/status?repo={cwd}` — last audit run stats |
 | "/lore audit estimate" | Direct to CLI: `claude-lore audit --estimate` — no API call needed |
+| "/lore compress" or "compress session / run compression" | `compress_session(repo)` → extract → `submit_compression(session_id, repo, extraction)` |
 
 **If structural index not built** (`codegraph_*` returns `error: structural index not built`):
 → Fall back to `portfolio_impact` for blast radius

@@ -8,6 +8,7 @@ import { registerGraphTools } from "./tools/graph.js";
 import { registerAnnotationTools } from "./tools/annotation.js";
 import { registerReviewTools } from "./tools/review.js";
 import { registerStructuralTools } from "./tools/structural.js";
+import { registerCompressionTools } from "./tools/compression.js";
 
 // ---------------------------------------------------------------------------
 // MCP stats — module-level, read by GET /api/mcp/stats
@@ -24,7 +25,7 @@ const _mcpStats: McpStats = {
   totalCalls: 0,
   lastCallAt: null,
   callsToday: 0,
-  toolCount:  31,
+  toolCount:  35,
 };
 
 let _todayDate = new Date().toDateString();
@@ -51,7 +52,7 @@ export function getMcpStats(): McpStats {
 export function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "claude-lore",
-    version: "1.0.0",
+    version: "1.1.0",
   });
 
   // Wrap the server's tool call dispatch to track stats.
@@ -66,6 +67,7 @@ export function createMcpServer(): McpServer {
   registerAnnotationTools(server);
   registerReviewTools(server);
   registerStructuralTools(server);
+  registerCompressionTools(server);
 
   // Patch the tools/call handler to increment counters on every invocation.
   // The MCP SDK stores request handlers on the underlying Server instance as

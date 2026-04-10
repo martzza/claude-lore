@@ -425,11 +425,49 @@ async function runMigrations(): Promise<void> {
     try { await sessionsDb.execute(sql); } catch {}
   }
 
+  // resolved_at on deferred_work (used by Phase 4+5 completion/abandonment actions)
+  try {
+    await sessionsDb.execute(`ALTER TABLE deferred_work ADD COLUMN resolved_at INTEGER`);
+  } catch {}
+
   // Indexes for lifecycle_status queries
   try {
     await sessionsDb.execute(`CREATE INDEX IF NOT EXISTS idx_decisions_lifecycle  ON decisions(lifecycle_status)`);
     await sessionsDb.execute(`CREATE INDEX IF NOT EXISTS idx_deferred_lifecycle   ON deferred_work(lifecycle_status)`);
     await sessionsDb.execute(`CREATE INDEX IF NOT EXISTS idx_risks_lifecycle      ON risks(lifecycle_status)`);
+  } catch {}
+
+  // Phase 11: staleness_note — explains why a record was queued for review
+  const stalenessNoteCols = [
+    `ALTER TABLE decisions    ADD COLUMN staleness_note TEXT`,
+    `ALTER TABLE deferred_work ADD COLUMN staleness_note TEXT`,
+    `ALTER TABLE risks        ADD COLUMN staleness_note TEXT`,
+  ];
+  for (const sql of stalenessNoteCols) {
+    try { await sessionsDb.execute(sql); } catch {}
+  }
+
+  // Phase 11: lifecycle_status on cross_repo_index for propagating lifecycle to consumers
+  try {
+    await registryDb.execute(
+      `ALTER TABLE cross_repo_index ADD COLUMN lifecycle_status TEXT DEFAULT 'active'`,
+    );
+  } catch {}
+
+  // Phase 11: previous_symbols on structural index_meta for deleted-symbol detection
+  // (structural.db is per-repo and opened fresh by the indexer — migration runs lazily there)
+
+  // Phase 12: pending_compression flag + source tracking on sessions
+  try {
+    await sessionsDb.execute(`ALTER TABLE sessions ADD COLUMN pending_compression INTEGER DEFAULT 0`);
+  } catch {}
+  try {
+    await sessionsDb.execute(`ALTER TABLE sessions ADD COLUMN compression_source TEXT`);
+  } catch {}
+  try {
+    await sessionsDb.execute(
+      `CREATE INDEX IF NOT EXISTS idx_sessions_pending_compression ON sessions(pending_compression) WHERE pending_compression = 1`,
+    );
   } catch {}
 
   // audit_runs — one row per claude-lore audit invocation

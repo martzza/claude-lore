@@ -1,12 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "fs";
 import { join, isAbsolute, resolve, relative, extname } from "path";
 import { createClient } from "@libsql/client";
 import { execFileSync } from "child_process";
 import { randomUUID } from "crypto";
-import { getSymbolLocations } from "../annotation/mapper.js";
+import { parseFile } from "./parser.js";
+import { hashFile } from "./hasher.js";
+import { checkStalenessForSymbols } from "../staleness/service.js";
 
 // ---------------------------------------------------------------------------
-// File discovery (inline — discoverFiles is not exported from deps.ts)
+// File discovery
 // ---------------------------------------------------------------------------
 
 const SOURCE_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -44,19 +46,6 @@ function discoverFiles(cwd: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Call graph skip set
-// ---------------------------------------------------------------------------
-
-const SKIP_CALLS = new Set([
-  "if", "for", "while", "switch", "catch", "return", "typeof", "instanceof",
-  "console", "Object", "Array", "Promise", "JSON", "Math", "parseInt", "parseFloat",
-  "String", "Number", "Boolean", "Error", "fetch", "setTimeout", "clearTimeout",
-  "setInterval", "clearInterval", "require", "import", "super", "new", "delete",
-  "void", "throw", "await", "yield", "async", "function", "class", "const", "let", "var",
-  "true", "false", "null", "undefined", "NaN", "Infinity",
-]);
-
-// ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
 
@@ -71,6 +60,7 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
         end_line   INTEGER NOT NULL,
         kind       TEXT NOT NULL,
         exported   INTEGER DEFAULT 0,
+        is_test    INTEGER DEFAULT 0,
         service    TEXT,
         indexed_at INTEGER NOT NULL DEFAULT (unixepoch())
       )`,
@@ -83,6 +73,7 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
         callee      TEXT NOT NULL,
         caller_file TEXT NOT NULL,
         callee_file TEXT,
+        call_line   INTEGER,
         weight      INTEGER DEFAULT 1,
         indexed_at  INTEGER NOT NULL DEFAULT (unixepoch())
       )`,
@@ -90,12 +81,21 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
     },
     {
       sql: `CREATE TABLE IF NOT EXISTS index_meta (
-        repo         TEXT PRIMARY KEY,
-        commit_sha   TEXT,
-        indexed_at   INTEGER NOT NULL DEFAULT (unixepoch()),
-        file_count   INTEGER,
-        symbol_count INTEGER,
-        edge_count   INTEGER
+        repo             TEXT PRIMARY KEY,
+        commit_sha       TEXT,
+        indexed_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+        file_count       INTEGER,
+        symbol_count     INTEGER,
+        edge_count       INTEGER,
+        previous_symbols TEXT DEFAULT '[]'
+      )`,
+      args: [],
+    },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS file_hashes (
+        file_path  TEXT PRIMARY KEY,
+        sha256     TEXT NOT NULL,
+        indexed_at INTEGER NOT NULL DEFAULT (unixepoch())
       )`,
       args: [],
     },
@@ -103,7 +103,23 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
     { sql: `CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file)`, args: [] },
     { sql: `CREATE INDEX IF NOT EXISTS idx_call_graph_caller ON call_graph(caller)`, args: [] },
     { sql: `CREATE INDEX IF NOT EXISTS idx_call_graph_callee ON call_graph(callee)`, args: [] },
+    {
+      sql: `CREATE UNIQUE INDEX IF NOT EXISTS idx_call_graph_unique
+            ON call_graph(caller, callee, caller_file)`,
+      args: [],
+    },
   ], "write");
+
+  // Lazy migrations for structural.db instances created before these columns
+  const migrations = [
+    `ALTER TABLE index_meta ADD COLUMN previous_symbols TEXT DEFAULT '[]'`,
+    `ALTER TABLE symbols ADD COLUMN is_test INTEGER DEFAULT 0`,
+    `ALTER TABLE call_graph ADD COLUMN call_line INTEGER`,
+    `ALTER TABLE call_graph ADD COLUMN kind TEXT DEFAULT 'calls'`,
+  ];
+  for (const sql of migrations) {
+    try { await db.execute(sql); } catch { /* column already exists */ }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -111,13 +127,16 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
 // ---------------------------------------------------------------------------
 
 export interface IndexResult {
-  repo:         string;
-  commit_sha:   string;
-  file_count:   number;
-  symbol_count: number;
-  edge_count:   number;
-  skipped:      boolean;
-  duration_ms:  number;
+  repo:            string;
+  commit_sha:      string;
+  file_count:      number;
+  symbol_count:    number;
+  edge_count:      number;
+  skipped:         boolean;
+  duration_ms:     number;
+  incremental?:    boolean;
+  changed_files?:  number;
+  unchanged_files?: number;
 }
 
 export interface IndexMeta {
@@ -133,8 +152,6 @@ export interface IndexMeta {
 // buildIndex — concurrent write guard
 // ---------------------------------------------------------------------------
 
-// Prevents two simultaneous buildIndex calls for the same cwd from interleaving
-// DELETE + INSERT and corrupting the structural.db.
 const _buildLocks = new Map<string, Promise<IndexResult>>();
 
 export function buildIndex(repo: string, cwd: string, force = false): Promise<IndexResult> {
@@ -143,6 +160,11 @@ export function buildIndex(repo: string, cwd: string, force = false): Promise<In
   const promise = _runBuildIndex(repo, cwd, force).finally(() => _buildLocks.delete(cwd));
   _buildLocks.set(cwd, promise);
   return promise;
+}
+
+async function loadFileHashes(db: ReturnType<typeof createClient>): Promise<Map<string, string>> {
+  const rows = await db.execute("SELECT file_path, sha256 FROM file_hashes");
+  return new Map(rows.rows.map((r) => [String(r["file_path"]), String(r["sha256"])]));
 }
 
 async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promise<IndexResult> {
@@ -171,10 +193,10 @@ async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promis
 
   await initStructuralDb(db);
 
-  // Check if we can skip
+  // Check if we can skip (commit SHA unchanged AND not force)
   if (!force) {
     const metaRes = await db.execute({
-      sql: `SELECT commit_sha, symbol_count, edge_count, file_count, indexed_at FROM index_meta WHERE repo = ?`,
+      sql:  `SELECT commit_sha, symbol_count, edge_count, file_count, indexed_at FROM index_meta WHERE repo = ?`,
       args: [repo],
     });
     if (metaRes.rows.length > 0) {
@@ -182,7 +204,7 @@ async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promis
       if (String(existing["commit_sha"]) === commitSha) {
         return {
           repo,
-          commit_sha: commitSha,
+          commit_sha:   commitSha,
           file_count:   Number(existing["file_count"]   ?? 0),
           symbol_count: Number(existing["symbol_count"] ?? 0),
           edge_count:   Number(existing["edge_count"]   ?? 0),
@@ -193,179 +215,235 @@ async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promis
     }
   }
 
-  // Clear existing data
-  await db.batch([
-    { sql: `DELETE FROM symbols`, args: [] },
-    { sql: `DELETE FROM call_graph`, args: [] },
-    { sql: `DELETE FROM index_meta WHERE repo = ?`, args: [repo] },
-  ], "write");
-
-  // Discover files (discoverFiles already filters by SOURCE_EXTS)
-  const allFiles = discoverFiles(cwd);
-  const files = allFiles.slice(0, 500);
-
-  // Collect symbols
-  interface SymbolEntry {
-    id:         string;
-    name:       string;
-    file:       string;
-    start_line: number;
-    end_line:   number;
-    kind:       string;
-    exported:   number;
-  }
-
-  const symbolEntries: SymbolEntry[] = [];
-  const symbolsByFile = new Map<string, SymbolEntry[]>();
-
-  for (const absPath of files) {
-    const relPath = relative(cwd, absPath);
-    let lines: string[] = [];
-    try {
-      lines = readFileSync(absPath, "utf8").split("\n");
-    } catch {
-      continue;
+  // Read previous symbol set before clearing (for deleted-symbol detection)
+  let previousSymbols: string[] = [];
+  try {
+    const prevMeta = await db.execute({
+      sql:  `SELECT previous_symbols FROM index_meta WHERE repo = ?`,
+      args: [repo],
+    });
+    if (prevMeta.rows.length > 0 && prevMeta.rows[0]!["previous_symbols"] != null) {
+      previousSymbols = JSON.parse(String(prevMeta.rows[0]!["previous_symbols"])) as string[];
     }
+  } catch { /* table may not have column yet */ }
 
-    const locations = getSymbolLocations(absPath);
-    const fileSymbols: SymbolEntry[] = [];
+  // Discover all source files
+  const allFiles = discoverFiles(cwd).slice(0, 500);
 
-    for (const loc of locations) {
-      const lineIdx = loc.start_line - 1;
-      const line = lines[lineIdx] ?? "";
+  // Load existing file hashes for incremental detection
+  const existingHashes = await loadFileHashes(db);
+  const newHashes      = new Map<string, string>();
+  const changedFiles:   string[] = [];
+  const unchangedFiles: string[] = [];
 
-      // Determine kind
-      let kind = "function";
-      if (/class\s/.test(line)) {
-        kind = "class";
-      } else if (/interface\s/.test(line)) {
-        kind = "interface";
-      } else if (/type\s+\w+\s*=|type\s+\w+\s*\{/.test(line)) {
-        kind = "type";
-      } else if (/^\s{2,}[A-Za-z].*\(/.test(line)) {
-        kind = "method";
-      } else if (/const\s+\w+\s*=/.test(line)) {
-        kind = "const";
-      }
-
-      const exported = line.includes("export") ? 1 : 0;
-      const id = `${relPath}:${loc.start_line}`;
-
-      const entry: SymbolEntry = {
-        id,
-        name:       loc.symbol,
-        file:       relPath,
-        start_line: loc.start_line,
-        end_line:   loc.end_line,
-        kind,
-        exported,
-      };
-      fileSymbols.push(entry);
-      symbolEntries.push(entry);
+  for (const f of allFiles) {
+    const relPath = relative(cwd, f);
+    const hash = hashFile(f);
+    if (!hash) continue;
+    newHashes.set(relPath, hash);
+    if (!force && existingHashes.get(relPath) === hash) {
+      unchangedFiles.push(f);
+    } else {
+      changedFiles.push(f);
     }
-
-    symbolsByFile.set(relPath, fileSymbols);
   }
 
-  // Batch insert symbols
-  const BATCH_SIZE = 200;
-  for (let i = 0; i < symbolEntries.length; i += BATCH_SIZE) {
-    const batch = symbolEntries.slice(i, i + BATCH_SIZE);
-    await db.batch(
-      batch.map((s) => ({
-        sql: `INSERT OR REPLACE INTO symbols (id, name, file, start_line, end_line, kind, exported)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        args: [s.id, s.name, s.file, s.start_line, s.end_line, s.kind, s.exported],
-      })),
-      "write",
-    );
+  const isIncremental = !force && unchangedFiles.length > 0 && changedFiles.length < allFiles.length;
+  const filesToParse  = isIncremental ? changedFiles : allFiles;
+
+  if (filesToParse.length === 0 && isIncremental) {
+    // All files unchanged — update commit SHA and return
+    await db.execute({
+      sql:  `UPDATE index_meta SET commit_sha = ?, indexed_at = unixepoch() WHERE repo = ?`,
+      args: [commitSha, repo],
+    });
+    const existing = await db.execute({
+      sql:  `SELECT symbol_count, edge_count, file_count FROM index_meta WHERE repo = ?`,
+      args: [repo],
+    });
+    const row = existing.rows[0];
+    return {
+      repo, commit_sha: commitSha,
+      file_count:     allFiles.length,
+      symbol_count:   Number(row?.["symbol_count"] ?? 0),
+      edge_count:     Number(row?.["edge_count"]   ?? 0),
+      skipped:        false,
+      duration_ms:    Date.now() - startMs,
+      incremental:    true,
+      changed_files:  0,
+      unchanged_files: unchangedFiles.length,
+    };
   }
 
-  // Build call graph
-  const allSymbolNames = new Set(symbolEntries.map((s) => s.name));
+  console.log(
+    `[claude-lore] indexing ${filesToParse.length} files` +
+    (isIncremental ? ` (${unchangedFiles.length} unchanged, skipped)` : ""),
+  );
 
-  // Map from symbolName -> file (first occurrence wins; used to populate callee_file)
+  if (isIncremental) {
+    // Delete only changed-file symbols/edges so unchanged data stays intact
+    for (const f of changedFiles) {
+      const relPath = relative(cwd, f);
+      await db.execute({ sql: `DELETE FROM symbols WHERE file = ?`,           args: [relPath] });
+      await db.execute({ sql: `DELETE FROM call_graph WHERE caller_file = ?`, args: [relPath] });
+    }
+  } else {
+    // Full rebuild — clear everything
+    await db.batch([
+      { sql: `DELETE FROM symbols`,    args: [] },
+      { sql: `DELETE FROM call_graph`, args: [] },
+      { sql: `DELETE FROM file_hashes`, args: [] },
+    ], "write");
+  }
+
+  // Build symbol file map for callee_file resolution (load existing for incremental)
   const symbolFileMap = new Map<string, string>();
-  for (const s of symbolEntries) {
-    if (!symbolFileMap.has(s.name)) symbolFileMap.set(s.name, s.file);
+  if (isIncremental) {
+    const existing = await db.execute(`SELECT name, file FROM symbols`);
+    for (const r of existing.rows) {
+      const name = String(r["name"]);
+      if (!symbolFileMap.has(name)) symbolFileMap.set(name, String(r["file"]));
+    }
   }
 
-  // weight map: "${caller}:${callee}" -> weight
-  const weightMap = new Map<string, number>();
-  // caller info map: "${caller}:${callee}" -> { caller_file, callee_file }
-  const edgeMeta = new Map<string, { caller_file: string; callee_file: string | undefined }>();
+  let symbolCount = 0;
+  let edgeCount   = 0;
 
-  const CALL_RE = /\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g;
+  // Parse each file
+  for (const filePath of filesToParse) {
+    const relPath = relative(cwd, filePath);
+    const parsed  = await parseFile(filePath);
+    if (!parsed) continue;
 
-  for (const [relPath, fileSymbols] of symbolsByFile) {
-    const absPath = join(cwd, relPath);
-    let content: string;
-    try {
-      content = readFileSync(absPath, "utf8");
-    } catch {
-      continue;
-    }
-    const lines = content.split("\n");
+    const BATCH_SIZE = 200;
 
-    for (const sym of fileSymbols) {
-      const bodyLines = lines.slice(sym.start_line - 1, sym.end_line);
-      const bodyText = bodyLines.join("\n");
+    // Write symbols
+    for (let i = 0; i < parsed.symbols.length; i += BATCH_SIZE) {
+      const batch = parsed.symbols.slice(i, i + BATCH_SIZE);
+      await db.batch(
+        batch.map((sym) => ({
+          sql:  `INSERT OR REPLACE INTO symbols
+                 (id, name, file, start_line, end_line, kind, exported, is_test)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            randomUUID(), sym.name, relPath,
+            sym.start_line, sym.end_line,
+            sym.kind,
+            sym.exported ? 1 : 0,
+            sym.is_test  ? 1 : 0,
+          ],
+        })),
+        "write",
+      );
+      symbolCount += batch.length;
 
-      let m: RegExpExecArray | null;
-      const re = new RegExp(CALL_RE.source, "g");
-      while ((m = re.exec(bodyText)) !== null) {
-        const callee = m[1]!;
-        if (SKIP_CALLS.has(callee)) continue;
-        if (callee.length < 3) continue;
-        if (callee === sym.name) continue;
-        if (!allSymbolNames.has(callee)) continue;
-
-        const key = `${sym.name}:${callee}`;
-        weightMap.set(key, (weightMap.get(key) ?? 0) + 1);
-        if (!edgeMeta.has(key)) {
-          edgeMeta.set(key, {
-            caller_file: relPath,
-            callee_file: symbolFileMap.get(callee),
-          });
-        }
+      // Update symbolFileMap
+      for (const sym of batch) {
+        if (!symbolFileMap.has(sym.name)) symbolFileMap.set(sym.name, relPath);
       }
     }
+
+    // Deduplicate call edges within this file (weight = occurrence count)
+    const edgeWeight = new Map<string, { call_line: number; weight: number; callee_file?: string }>();
+    for (const call of parsed.calls) {
+      const key = `${call.caller}:${call.callee}`;
+      const existing = edgeWeight.get(key);
+      if (existing) {
+        existing.weight++;
+      } else {
+        edgeWeight.set(key, {
+          call_line:  call.call_line,
+          weight:     1,
+          callee_file: symbolFileMap.get(call.callee),
+        });
+      }
+    }
+
+    // Write call edges
+    const edges = [...edgeWeight.entries()];
+    for (let i = 0; i < edges.length; i += BATCH_SIZE) {
+      const batch = edges.slice(i, i + BATCH_SIZE);
+      await db.batch(
+        batch.map(([key, meta]) => {
+          const [caller, callee] = key.split(":") as [string, string];
+          return {
+            sql:  `INSERT INTO call_graph (id, caller, callee, caller_file, callee_file, call_line, weight)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(caller, callee, caller_file) DO UPDATE SET weight = weight + excluded.weight`,
+            args: [
+              randomUUID(), caller, callee, relPath,
+              meta.callee_file ?? null,
+              meta.call_line,
+              meta.weight,
+            ],
+          };
+        }),
+        "write",
+      );
+      edgeCount += batch.length;
+    }
+
+    // Update file hash
+    const hash = newHashes.get(relPath);
+    if (hash) {
+      await db.execute({
+        sql:  `INSERT OR REPLACE INTO file_hashes (file_path, sha256) VALUES (?, ?)`,
+        args: [relPath, hash],
+      });
+    }
   }
 
-  // Insert call graph edges
-  const edgeEntries = [...weightMap.entries()].map(([key, weight]) => {
-    const [caller, callee] = key.split(":") as [string, string];
-    const meta = edgeMeta.get(key)!;
-    return { id: key, caller, callee, caller_file: meta.caller_file, callee_file: meta.callee_file ?? null, weight };
-  });
+  // For non-incremental, count all symbols/edges (some came from previous data)
+  if (!isIncremental) {
+    const sc = await db.execute(`SELECT COUNT(*) as n FROM symbols`);
+    const ec = await db.execute(`SELECT COUNT(*) as n FROM call_graph`);
+    symbolCount = Number(sc.rows[0]?.["n"] ?? symbolCount);
+    edgeCount   = Number(ec.rows[0]?.["n"] ?? edgeCount);
+  } else {
+    // For incremental, add to existing counts
+    const sc = await db.execute(`SELECT COUNT(*) as n FROM symbols`);
+    const ec = await db.execute(`SELECT COUNT(*) as n FROM call_graph`);
+    symbolCount = Number(sc.rows[0]?.["n"] ?? symbolCount);
+    edgeCount   = Number(ec.rows[0]?.["n"] ?? edgeCount);
+  }
 
-  for (let i = 0; i < edgeEntries.length; i += BATCH_SIZE) {
-    const batch = edgeEntries.slice(i, i + BATCH_SIZE);
-    await db.batch(
-      batch.map((e) => ({
-        sql: `INSERT OR REPLACE INTO call_graph (id, caller, callee, caller_file, callee_file, weight)
-              VALUES (?, ?, ?, ?, ?, ?)`,
-        args: [e.id, e.caller, e.callee, e.caller_file, e.callee_file, e.weight],
-      })),
-      "write",
-    );
+  // Current symbol names for deletion detection
+  const currentRes = await db.execute(`SELECT name FROM symbols`);
+  const currentSymbolNames = currentRes.rows.map((r) => String(r["name"]));
+
+  // Detect deleted symbols and trigger staleness check
+  if (previousSymbols.length > 0) {
+    const currentSet = new Set(currentSymbolNames);
+    const deletedSymbols = previousSymbols.filter((s) => !currentSet.has(s));
+    if (deletedSymbols.length > 0) {
+      console.log(`[claude-lore] ${deletedSymbols.length} symbols deleted — checking reasoning records`);
+      checkStalenessForSymbols(repo, deletedSymbols).catch(() => {});
+    }
   }
 
   // Upsert index_meta
   await db.execute({
-    sql: `INSERT OR REPLACE INTO index_meta (repo, commit_sha, indexed_at, file_count, symbol_count, edge_count)
-          VALUES (?, ?, unixepoch(), ?, ?, ?)`,
-    args: [repo, commitSha, files.length, symbolEntries.length, edgeEntries.length],
+    sql:  `INSERT OR REPLACE INTO index_meta
+           (repo, commit_sha, indexed_at, file_count, symbol_count, edge_count, previous_symbols)
+           VALUES (?, ?, unixepoch(), ?, ?, ?, ?)`,
+    args: [
+      repo, commitSha, allFiles.length,
+      symbolCount, edgeCount,
+      JSON.stringify(currentSymbolNames),
+    ],
   });
 
   return {
     repo,
-    commit_sha:   commitSha,
-    file_count:   files.length,
-    symbol_count: symbolEntries.length,
-    edge_count:   edgeEntries.length,
-    skipped:      false,
-    duration_ms:  Date.now() - startMs,
+    commit_sha:      commitSha,
+    file_count:      allFiles.length,
+    symbol_count:    symbolCount,
+    edge_count:      edgeCount,
+    skipped:         false,
+    duration_ms:     Date.now() - startMs,
+    incremental:     isIncremental,
+    changed_files:   filesToParse.length,
+    unchanged_files: unchangedFiles.length,
   };
 }
 
@@ -386,9 +464,8 @@ export async function isIndexStale(_repo: string, cwd: string): Promise<boolean>
 
   try {
     const db = createClient({ url: "file:" + dbPath });
-    // One structural.db = one repo — take the first row regardless of name
     const res = await db.execute({
-      sql: `SELECT commit_sha FROM index_meta LIMIT 1`, /* one structural.db = one repo */
+      sql:  `SELECT commit_sha FROM index_meta LIMIT 1`,
       args: [],
     });
     if (res.rows.length === 0) return true;
@@ -408,10 +485,9 @@ export async function getIndexStats(_repo: string, cwd: string): Promise<IndexMe
 
   try {
     const db = createClient({ url: "file:" + dbPath });
-    // One structural.db = one repo — take the first (and only) row regardless of name
     const res = await db.execute({
-      sql: `SELECT repo, commit_sha, indexed_at, file_count, symbol_count, edge_count
-            FROM index_meta LIMIT 1`, /* one structural.db = one repo */
+      sql:  `SELECT repo, commit_sha, indexed_at, file_count, symbol_count, edge_count
+             FROM index_meta LIMIT 1`,
       args: [],
     });
     if (res.rows.length === 0) return null;

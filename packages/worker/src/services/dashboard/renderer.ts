@@ -687,8 +687,10 @@ function buildSystemPanel(data) {
     + row('Registry', dbs.registry?.ok ? dbs.registry.row_count+' rows' : 'error', dbs.registry?.ok?'ok':'err')
     + row('Personal', dbs.personal?.ok ? dbs.personal.row_count+' rows' : 'error', dbs.personal?.ok?'ok':'err');
 
-  const aiColour = ai.api_key_set ? 'green' : 'amber';
-  const aiRows = row('API key', ai.api_key_set?'set':'not set', ai.api_key_set?'ok':'warn')
+  const pendingComp = ai.pending_compression ?? 0;
+  const aiColour = pendingComp > 0 ? 'amber' : 'green';
+  const aiRows = row('Compression', ai.mode??'mcp', 'ok')
+    + row('Pending upgrade', pendingComp, pendingComp > 0 ? 'warn' : 'ok')
     + row('Turso', turso.connected?'connected':'local only', turso.connected?'ok':'warn')
     + row('Compressed', ai.sessions_compressed??0)
     + row('PM2', pm2.running?'running':'not found', pm2.running?'ok':'warn');
@@ -704,7 +706,7 @@ function buildSystemPanel(data) {
         row(r2.repo.split('/').pop()??r2.repo, r2.pending+' ('+(r2.oldest_age_days??0)+'d old)', r2.pending>10?'err':'warn')
       ).join('');
 
-  const envColour = env.ANTHROPIC_API_KEY==='set' ? 'green' : 'amber';
+  const envColour = env.COMPRESSION_MODE==='mcp' ? 'green' : 'amber';
   const envRows = Object.entries(env).map(([k,v]) =>
     row(k, v, v==='set'?'ok':'warn')
   ).join('');

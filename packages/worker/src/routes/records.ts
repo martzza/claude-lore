@@ -241,4 +241,117 @@ router.get("/counts", async (req, res) => {
   });
 });
 
+// POST /api/records/lifecycle — lifecycle state transitions
+// Actions: mitigated | accepted | completed | abandoned | superseded | still_valid | reopen
+const LIFECYCLE_TABLES = new Set(["decisions", "deferred_work", "risks"]);
+
+const LifecycleBody = z.object({
+  id: z.string(),
+  table: z.string().refine((t) => LIFECYCLE_TABLES.has(t), {
+    message: "table must be one of: decisions, deferred_work, risks",
+  }),
+  action: z.enum(["mitigated", "accepted", "completed", "abandoned", "superseded", "still_valid", "reopen"]),
+  note: z.string().optional(),
+  superseded_by: z.string().optional(), // required when action=superseded
+});
+
+router.post("/lifecycle", requireScope("write:decisions"), async (req, res) => {
+  const parsed = LifecycleBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const { id, table, action, note, superseded_by } = parsed.data;
+  const email = getGitEmail();
+  const now = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
+
+  try {
+    if (action === "still_valid") {
+      // Just update last_reviewed_at — no status change
+      await sessionsDb.execute({
+        sql: `UPDATE ${table} SET last_reviewed_at = ?, reviewed_by = ? WHERE id = ?`,
+        args: [now, email, id],
+      });
+      res.json({ ok: true, id, table, action });
+      return;
+    }
+
+    if (action === "reopen") {
+      // Restore to active — only valid when currently not active
+      await sessionsDb.execute({
+        sql: `UPDATE ${table} SET lifecycle_status = 'active', deprecated_by = NULL, deprecated_at = NULL,
+              last_reviewed_at = ?, reviewed_by = ? WHERE id = ?`,
+        args: [now, email, id],
+      });
+      res.json({ ok: true, id, table, action });
+      return;
+    }
+
+    if (action === "superseded") {
+      if (!superseded_by) {
+        res.status(400).json({ error: "superseded_by is required for action=superseded" });
+        return;
+      }
+      await sessionsDb.execute({
+        sql: `UPDATE ${table} SET lifecycle_status = 'superseded', superseded_by = ?,
+              superseded_at = ?, reviewed_by = ?, last_reviewed_at = ?
+              WHERE id = ?`,
+        args: [superseded_by, now, email, now, id],
+      });
+      res.json({ ok: true, id, table, action });
+      return;
+    }
+
+    if (action === "mitigated" && table === "risks") {
+      await sessionsDb.execute({
+        sql: `UPDATE risks SET lifecycle_status = 'mitigated', mitigated_at = ?,
+              mitigation_confirmed_by = ?, mitigation_note = ?,
+              last_reviewed_at = ?, reviewed_by = ? WHERE id = ?`,
+        args: [now, email, note ?? null, now, email, id],
+      });
+      res.json({ ok: true, id, table, action });
+      return;
+    }
+
+    if (action === "accepted" && table === "risks") {
+      await sessionsDb.execute({
+        sql: `UPDATE risks SET lifecycle_status = 'accepted', accepted_at = ?,
+              accepted_by = ?, acceptance_note = ?,
+              last_reviewed_at = ?, reviewed_by = ? WHERE id = ?`,
+        args: [now, email, note ?? null, now, email, id],
+      });
+      res.json({ ok: true, id, table, action });
+      return;
+    }
+
+    if (action === "completed" && table === "deferred_work") {
+      await sessionsDb.execute({
+        sql: `UPDATE deferred_work SET lifecycle_status = 'completed', status = 'done',
+              resolved_how = 'completed', resolved_note = ?, resolved_at = ?,
+              last_reviewed_at = ?, reviewed_by = ? WHERE id = ?`,
+        args: [note ?? null, nowMs, now, email, id],
+      });
+      res.json({ ok: true, id, table, action });
+      return;
+    }
+
+    if (action === "abandoned" && table === "deferred_work") {
+      await sessionsDb.execute({
+        sql: `UPDATE deferred_work SET lifecycle_status = 'abandoned', status = 'done',
+              resolved_how = 'abandoned', resolved_note = ?, resolved_at = ?,
+              last_reviewed_at = ?, reviewed_by = ? WHERE id = ?`,
+        args: [note ?? null, nowMs, now, email, id],
+      });
+      res.json({ ok: true, id, table, action });
+      return;
+    }
+
+    // Fallthrough: action+table combo not supported
+    res.status(400).json({ error: `action '${action}' is not valid for table '${table}'` });
+  } catch (err) {
+    res.status(400).json({ error: String(err) });
+  }
+});
+
 export default router;

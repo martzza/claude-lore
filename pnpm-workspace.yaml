@@ -5,3 +5,7 @@ packages:
   - 'packages/cli'
   - 'plugins/claude-lore'
   - 'benchmark'
+allowBuilds:
+  tree-sitter: true
+  tree-sitter-javascript: true
+  tree-sitter-typescript: true

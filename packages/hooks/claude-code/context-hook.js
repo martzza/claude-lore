@@ -8,6 +8,21 @@ import { detectService } from "./detect-service.js";
 const PORT = process.env.CLAUDE_LORE_PORT ?? "37778";
 const NUDGE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+async function getPendingCompression(repo, port) {
+  try {
+    const params = new URLSearchParams({ repo });
+    const res = await fetch(
+      `http://127.0.0.1:${port}/api/sessions/pending-compression?${params}`,
+      { signal: AbortSignal.timeout(2000) },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.pending ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   let input = {};
   try {
@@ -53,6 +68,17 @@ async function main() {
     }
   } catch {}
 
+  // Check for pending compression session (from last Stop hook)
+  let compressionDirective = "";
+  const pending = await getPendingCompression(repo, PORT);
+  if (pending) {
+    compressionDirective =
+      "\n\n### Pending compression\n" +
+      "A session ended without AI compression. Run `compress_session` and `submit_compression` " +
+      "MCP tools to extract decisions, risks, and deferred work from the last session's observations.\n" +
+      `Session: ${pending.session_id}\n`;
+  }
+
   // Fetch context to inject
   try {
     const params = new URLSearchParams({ repo });
@@ -63,16 +89,16 @@ async function main() {
     );
     if (res.ok) {
       const data = await res.json();
-      const context = (data.context ?? "") + nudgeSection;
+      const context = (data.context ?? "") + nudgeSection + compressionDirective;
       if (context.trim()) {
         process.stdout.write(context);
       }
-    } else if (nudgeSection) {
-      process.stdout.write(nudgeSection);
+    } else if (nudgeSection || compressionDirective) {
+      process.stdout.write(nudgeSection + compressionDirective);
     }
   } catch {
-    if (nudgeSection) {
-      process.stdout.write(nudgeSection);
+    if (nudgeSection || compressionDirective) {
+      process.stdout.write(nudgeSection + compressionDirective);
     }
   }
 }

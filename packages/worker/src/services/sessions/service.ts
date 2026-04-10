@@ -80,11 +80,19 @@ export async function completeSession(
   summary?: string,
 ): Promise<void> {
   const now = Date.now();
-  await sessionsDb.execute({
-    sql: `UPDATE sessions SET status = 'complete', ended_at = ?, summary = ?
-          WHERE id = ?`,
-    args: [now, summary ?? null, sessionId],
-  });
+  if (summary !== undefined) {
+    // Compression pass — write summary explicitly
+    await sessionsDb.execute({
+      sql: `UPDATE sessions SET status = 'complete', ended_at = ?, summary = ? WHERE id = ?`,
+      args: [now, summary, sessionId],
+    });
+  } else {
+    // Cleanup hook — mark complete but never overwrite a summary already set by compression
+    await sessionsDb.execute({
+      sql: `UPDATE sessions SET status = 'complete', ended_at = ? WHERE id = ?`,
+      args: [now, sessionId],
+    });
+  }
 }
 
 export async function saveDecision(

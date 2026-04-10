@@ -1,34 +1,9 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "crypto";
 import { getSessionObservations, isSessionComplete, saveDeferredWork, saveRisk, completeSession } from "../sessions/service.js";
 import { sessionsDb } from "../sqlite/db.js";
 import { createDraftAdr } from "../adr/service.js";
 import { getGitEmail } from "../sync/service.js";
-
-const client = new Anthropic();
-
-interface CompressionResult {
-  summary: string;
-  symbols_touched: string[];
-  decisions: Array<{ content: string; rationale?: string; symbol?: string }>;
-  deferred: Array<{ content: string; symbol?: string }>;
-  risks: Array<{ content: string; symbol?: string }>;
-  adr_candidates: string[];
-}
-
-const COMPRESSION_PROMPT = `You are summarising an AI coding session for a knowledge graph.
-
-Given the raw session observations below, extract a structured JSON object with these fields:
-- summary: 2-3 sentence summary of what happened this session
-- symbols_touched: array of symbol/function/class names that were referenced or modified
-- decisions: array of architectural decisions made (content, optional rationale, optional symbol)
-- deferred: array of work items explicitly parked for later (content, optional symbol)
-- risks: array of risks or constraints identified (content, optional symbol)
-- adr_candidates: array of decisions worth formal ADR review (strings)
-
-All extracted records have confidence "extracted" — never write "confirmed".
-
-Return ONLY valid JSON, no markdown fences.`;
+import { runRuleBasedExtraction } from "./rule-based.js";
 
 // ---------------------------------------------------------------------------
 // Supersession detection helpers
@@ -135,16 +110,17 @@ async function updateTouchedBySessions(
 }
 
 // ---------------------------------------------------------------------------
-// Decision save with supersession awareness
+// Decision save with supersession awareness (used by submit_compression)
 // ---------------------------------------------------------------------------
 
-async function saveDecisionWithSupersession(
+export async function saveDecisionWithSupersession(
   sessionId: string,
   repo: string,
   content: string,
   rationale: string | undefined,
   symbol: string | undefined,
   service: string | undefined,
+  source = "compression:mcp",
 ): Promise<void> {
   const candidate = await findSupersessionCandidate(repo, symbol ?? null, content);
   const id = randomUUID();
@@ -156,9 +132,9 @@ async function saveDecisionWithSupersession(
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO decisions
               (id, repo, session_id, symbol, content, rationale, confidence,
-               exported_tier, anchor_status, created_at, service, created_by, supersedes)
-            VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?, ?)`,
-      args: [id, repo, sessionId, symbol ?? null, content, rationale ?? null, now, service ?? null, createdBy, candidate.candidateId],
+               exported_tier, anchor_status, created_at, service, created_by, supersedes, source)
+            VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?, ?, ?)`,
+      args: [id, repo, sessionId, symbol ?? null, content, rationale ?? null, now, service ?? null, createdBy, candidate.candidateId, source],
     });
     // Mark the old decision as superseded
     await sessionsDb.execute({
@@ -174,9 +150,9 @@ async function saveDecisionWithSupersession(
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO decisions
               (id, repo, session_id, symbol, content, rationale, confidence,
-               exported_tier, anchor_status, created_at, service, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?)`,
-      args: [id, repo, sessionId, symbol ?? null, content, rationale ?? null, now, service ?? null, createdBy],
+               exported_tier, anchor_status, created_at, service, created_by, source)
+            VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?, ?)`,
+      args: [id, repo, sessionId, symbol ?? null, content, rationale ?? null, now, service ?? null, createdBy, source],
     });
     await sessionsDb.execute({
       sql: `UPDATE decisions SET confidence = 'contested' WHERE id = ? AND confidence != 'confirmed'`,
@@ -187,15 +163,15 @@ async function saveDecisionWithSupersession(
     await sessionsDb.execute({
       sql: `INSERT OR IGNORE INTO decisions
               (id, repo, session_id, symbol, content, rationale, confidence,
-               exported_tier, anchor_status, created_at, service, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?)`,
-      args: [id, repo, sessionId, symbol ?? null, content, rationale ?? null, now, service ?? null, createdBy],
+               exported_tier, anchor_status, created_at, service, created_by, source)
+            VALUES (?, ?, ?, ?, ?, ?, 'extracted', 'private', 'healthy', ?, ?, ?, ?)`,
+      args: [id, repo, sessionId, symbol ?? null, content, rationale ?? null, now, service ?? null, createdBy, source],
     });
   }
 }
 
 // ---------------------------------------------------------------------------
-// Main compression pass
+// Main compression pass — rule-based extraction + MCP upgrade queue
 // ---------------------------------------------------------------------------
 
 export async function runCompressionPass(
@@ -213,47 +189,58 @@ export async function runCompressionPass(
     return;
   }
 
-  const observationText = observations
-    .map((o) => {
-      const obs = o as Record<string, unknown>;
-      return `[${String(obs["tool_name"] ?? "note")}] ${String(obs["content"])}`;
-    })
-    .join("\n");
+  // Run rule-based extraction immediately — no API key required
+  const ruleResult = await runRuleBasedExtraction(
+    sessionId,
+    repo,
+    observations.map((o) => o as Record<string, unknown>),
+  );
 
-  let result: CompressionResult;
-  try {
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 2048,
-      messages: [
-        {
-          role: "user",
-          content: `${COMPRESSION_PROMPT}\n\n## Observations\n${observationText}`,
-        },
-      ],
+  // Mark session as pending MCP-based compression upgrade
+  await sessionsDb.execute({
+    sql: `UPDATE sessions
+          SET pending_compression = 1,
+              compression_source = 'rule_based'
+          WHERE id = ?`,
+    args: [sessionId],
+  });
+
+  await completeSession(sessionId, ruleResult.summary);
+
+  // Log to service column if provided (idempotent)
+  if (service) {
+    await sessionsDb.execute({
+      sql: `UPDATE sessions SET service = ? WHERE id = ? AND service IS NULL`,
+      args: [service, sessionId],
     });
-
-    const text = message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    result = JSON.parse(text) as CompressionResult;
-  } catch (err) {
-    // Fallback: mark complete with raw observation count
-    await completeSession(
-      sessionId,
-      `Session ended with ${observations.length} observations. Compression failed: ${String(err)}`,
-    );
-    return;
   }
+}
 
+// ---------------------------------------------------------------------------
+// MCP upgrade: submit_compression writes AI-extracted records
+// ---------------------------------------------------------------------------
+
+export interface McpCompressionResult {
+  summary: string;
+  symbols_touched: string[];
+  decisions: Array<{ content: string; rationale?: string; symbol?: string }>;
+  deferred: Array<{ content: string; symbol?: string }>;
+  risks: Array<{ content: string; symbol?: string }>;
+  adr_candidates: string[];
+}
+
+export async function applyMcpCompression(
+  sessionId: string,
+  repo: string,
+  result: McpCompressionResult,
+  service?: string,
+): Promise<void> {
   // Persist decisions with supersession detection
   for (const d of result.decisions ?? []) {
-    await saveDecisionWithSupersession(sessionId, repo, d.content, d.rationale, d.symbol, service);
+    await saveDecisionWithSupersession(sessionId, repo, d.content, d.rationale, d.symbol, service, "compression:mcp");
   }
 
-  // Persist deferred and risks (no supersession logic — these accumulate)
+  // Persist deferred and risks
   for (const d of result.deferred ?? []) {
     await saveDeferredWork(sessionId, repo, d.content, d.symbol, service);
   }
@@ -261,13 +248,21 @@ export async function runCompressionPass(
     await saveRisk(sessionId, repo, r.content, r.symbol, service);
   }
 
-  // Tag decisions nominated as ADR candidates with adr_status='draft'
+  // Tag ADR candidates
   for (const candidate of result.adr_candidates ?? []) {
     await createDraftAdr(repo, candidate, candidate, undefined, undefined, undefined, sessionId);
   }
 
-  // Persist symbols_touched to open deferred items for zombie detection
+  // Update zombie tracking
   await updateTouchedBySessions(repo, sessionId, result.symbols_touched ?? []);
 
-  await completeSession(sessionId, result.summary);
+  // Mark upgrade complete — clear pending flag, update summary
+  await sessionsDb.execute({
+    sql: `UPDATE sessions
+          SET pending_compression = 0,
+              compression_source = 'mcp',
+              summary = ?
+          WHERE id = ?`,
+    args: [result.summary, sessionId],
+  });
 }

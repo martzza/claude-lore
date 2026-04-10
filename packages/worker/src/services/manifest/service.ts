@@ -15,6 +15,7 @@ export interface ExportedRecord {
   confidence: string | null;
   exported_tier: string;
   anchor_status: string;
+  lifecycle_status: string;
   created_at: number;
 }
 
@@ -46,6 +47,7 @@ function isExported(tier: string): boolean {
 
 function redactRow(row: Record<string, unknown>, table: string): ExportedRecord {
   const tier = String(row["exported_tier"] ?? "private");
+  const lifecycleStatus = String(row["lifecycle_status"] ?? "active");
   if (tier === "redacted") {
     return {
       id: String(row["id"]),
@@ -55,6 +57,7 @@ function redactRow(row: Record<string, unknown>, table: string): ExportedRecord 
       confidence: null,
       exported_tier: tier,
       anchor_status: String(row["anchor_status"] ?? "healthy"),
+      lifecycle_status: lifecycleStatus,
       created_at: Number(row["created_at"]),
     };
   }
@@ -66,6 +69,7 @@ function redactRow(row: Record<string, unknown>, table: string): ExportedRecord 
     confidence: String(row["confidence"] ?? "extracted"),
     exported_tier: tier,
     anchor_status: String(row["anchor_status"] ?? "healthy"),
+    lifecycle_status: lifecycleStatus,
     created_at: Number(row["created_at"]),
   };
 }
@@ -75,7 +79,8 @@ async function queryExported(
   repo: string,
 ): Promise<ExportedRecord[]> {
   const res = await sessionsDb.execute({
-    sql: `SELECT id, symbol, content, confidence, exported_tier, anchor_status, created_at
+    sql: `SELECT id, symbol, content, confidence, exported_tier, anchor_status,
+                 lifecycle_status, created_at
           FROM ${table}
           WHERE repo = ?
             AND exported_tier NOT IN ('private', 'personal')
@@ -142,13 +147,15 @@ export async function syncToRegistry(
   for (const record of allRecords) {
     if (!record.symbol) continue;
     await registryDb.execute({
-      sql: `INSERT OR REPLACE INTO cross_repo_index (symbol, repo, tier, signature, indexed_at, portfolio)
-            VALUES (?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT OR REPLACE INTO cross_repo_index
+              (symbol, repo, tier, signature, lifecycle_status, indexed_at, portfolio)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: [
         record.symbol,
         manifest.repo,
         record.exported_tier,
         record.content?.slice(0, 200) ?? null,
+        record.lifecycle_status ?? "active",
         manifest.synced_at,
         portfolioName,
       ],

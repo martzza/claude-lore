@@ -6,7 +6,7 @@ const program = new Command();
 program
   .name("claude-lore")
   .description("Structural + reasoning knowledge graph for AI coding agents")
-  .version("1.0.0");
+  .version("1.1.0");
 
 // claude-lore init
 program
@@ -37,8 +37,10 @@ program
   .command("index")
   .description("Build structural index (symbols + call graph) for this repo")
   .option("--force", "Force rebuild even if commit SHA is unchanged")
+  .option("--watch", "Start watch mode — index updates on every file save and git commit")
+  .option("--incremental", "Force incremental mode (skip files whose SHA is unchanged)")
   .option("--service <name>", "Scope to a specific service/package")
-  .action(async (opts: { force?: boolean; service?: string }) => {
+  .action(async (opts: { force?: boolean; watch?: boolean; incremental?: boolean; service?: string }) => {
     const { runIndex } = await import("./commands/index.js");
     await runIndex(opts);
   });

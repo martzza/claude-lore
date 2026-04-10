@@ -53,7 +53,7 @@ async function main(): Promise<void> {
 
     res.json({
       status: "ok",
-      version: "1.0.0",
+      version: "1.1.0",
       port: PORT,
       ts: Date.now(),
       turso: getTursoStatus(),

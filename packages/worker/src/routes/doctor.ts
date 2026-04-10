@@ -17,6 +17,8 @@ const EXPECTED_COLUMNS: Record<string, string[]> = {
     // Phase 10: lifecycle
     "lifecycle_status", "last_reviewed_at", "reviewed_by",
     "supersedes", "superseded_by", "superseded_at", "amendment_of",
+    // Phase 11: staleness note
+    "staleness_note",
   ],
   deferred_work: [
     "id", "repo", "session_id", "symbol", "content", "confidence", "exported_tier",
@@ -25,7 +27,9 @@ const EXPECTED_COLUMNS: Record<string, string[]> = {
     "deprecated_at", "pending_review", "audit_id", "service",
     // Phase 10: lifecycle
     "lifecycle_status", "last_reviewed_at", "reviewed_by",
-    "resolved_how", "resolved_note", "touched_by_sessions",
+    "resolved_how", "resolved_note", "resolved_at", "touched_by_sessions",
+    // Phase 11
+    "staleness_note",
   ],
   risks: [
     "id", "repo", "session_id", "symbol", "content", "confidence", "exported_tier",
@@ -36,6 +40,8 @@ const EXPECTED_COLUMNS: Record<string, string[]> = {
     "lifecycle_status", "last_reviewed_at", "reviewed_by",
     "mitigated_at", "mitigation_confirmed_by", "mitigation_note",
     "accepted_at", "accepted_by", "acceptance_note",
+    // Phase 11
+    "staleness_note",
   ],
   skill_manifest: [
     "id", "repo", "skill_name", "file_hash", "created_at", "scope", "updated_at",
