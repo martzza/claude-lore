@@ -544,7 +544,30 @@ export const CLI_COMMANDS: CommandHelp[] = [
       { command: "claude-lore review-diff", desc: "Review uncommitted changes vs HEAD" },
       { command: "claude-lore review-diff --base main", desc: "Review everything not yet on main" },
     ],
-    seeAlso: ["review-map", "review-propagation", "adr list"],
+    seeAlso: ["review-map", "review-propagation", "detect-changes", "adr list"],
+  },
+
+  {
+    name: "detect-changes",
+    group: "visualising",
+    summary: "Risk-scored change analysis — structural + reasoning layer combined.",
+    description:
+      "Analyses changed symbols and produces a risk score (0-100) per symbol by combining structural blast radius (transitive callers), reasoning layer risks (HIGH/CRITICAL records), test coverage gaps, and cross-community coupling. Returns an overall verdict: critical/high/medium/low. Use before committing or creating a PR.",
+    usage: [
+      "claude-lore detect-changes",
+      "claude-lore detect-changes --staged",
+      "claude-lore detect-changes --format json",
+    ],
+    flags: [
+      { flag: "--staged",         desc: "Only analyse staged changes (git diff --cached)" },
+      { flag: "--format <fmt>",   desc: "Output format: text (default) | json" },
+    ],
+    examples: [
+      { command: "claude-lore detect-changes",          desc: "Risk report for all uncommitted changes" },
+      { command: "claude-lore detect-changes --staged", desc: "Risk report for staged changes only" },
+      { command: "claude-lore detect-changes --format json | jq .verdict", desc: "Machine-readable verdict" },
+    ],
+    seeAlso: ["review-diff", "review-map", "index"],
   },
 
   {

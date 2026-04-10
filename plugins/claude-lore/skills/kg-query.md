@@ -44,6 +44,7 @@ Map the user's question to the correct MCP tool sequence before answering:
 |---|---|
 | "help me work on a task / give me context for X" | `get_minimal_context(task, repo)` — primary entry point; returns compact context under 300 tokens |
 | "what did we decide about X" | `reasoning_get(symbol=X, repo)` |
+| "how risky is this change / should I review this carefully" | `analyze_change_risk(symbols, repo)` — returns 0-100 score + verdict |
 | "what breaks if I change X" | `codegraph_impact(X, repo)` then `portfolio_impact(X, repo)` for cross-repo |
 | "who calls X / what uses X" | `codegraph_callers(symbol, repo)` |
 | "what does X call / what does X depend on" | `codegraph_callees(symbol, repo)` |

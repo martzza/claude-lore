@@ -1,13 +1,16 @@
 import { Router } from "express";
 import { writeFileSync, existsSync } from "fs";
 import { join, isAbsolute, resolve } from "path";
+import { homedir } from "os";
 import { tmpdir } from "os";
+import { createClient } from "@libsql/client";
 import { buildDepGraph, enrichDepGraph } from "../services/review/deps.js";
 import { getCachedGraph, setCachedGraph, invalidateCache } from "../services/review/cache.js";
 import { renderCodebaseMap } from "../services/review/renderers/map.js";
 import { renderPropagationView } from "../services/review/renderers/propagation.js";
 import { buildReview, renderReviewHtml, getGitDiff } from "../services/review/renderers/review.js";
 import { getStructuralClient } from "../services/structural/db-cache.js";
+import { scoreChangedSymbols, getChangedSymbols, deriveVerdict } from "../services/structural/risk-scorer.js";
 
 // Fetch file→community mapping from structural DB (best-effort, returns empty map on failure)
 async function getFileCommunityMap(cwd: string): Promise<Map<string, string>> {
@@ -206,14 +209,41 @@ router.get("/diff", async (req, res) => {
   try {
     if (format === "json") {
       const diffs = getGitDiff(cwd, base);
+
+      // Risk scoring — best effort
+      let riskScores: Awaited<ReturnType<typeof scoreChangedSymbols>> = [];
+      let verdict: string = "low";
+      try {
+        const structDbPath = join(cwd, ".codegraph", "structural.db");
+        const sessionsDbPath = join(homedir(), ".codegraph", "sessions.db");
+        if (existsSync(structDbPath)) {
+          const structDb  = createClient({ url: `file:${structDbPath}` });
+          const reasonDb  = createClient({ url: `file:${sessionsDbPath}` });
+          const changedPaths = diffs.map((d) => d.path);
+          const symbols = await getChangedSymbols(changedPaths, structDb);
+          riskScores = await scoreChangedSymbols(symbols.slice(0, 20), repo, structDb, reasonDb);
+          verdict = deriveVerdict(riskScores);
+        }
+      } catch { /* risk scoring is best-effort */ }
+
+      const topScore  = riskScores[0];
+      const verdictReason = topScore
+        ? `${topScore.symbol} — structural centrality ${topScore.components.structural_centrality}/40` +
+          (topScore.detail.critical_records > 0 ? ` + ${topScore.detail.critical_records} critical risk record(s)` : "") +
+          (!topScore.detail.has_test_coverage ? " + no test coverage" : "")
+        : "no changed symbols found in structural index";
+
       res.json({
         base,
-        files: diffs.map((d) => ({
+        changed_files: diffs.map((d) => ({
           path: d.path,
           status: d.status,
           lines_added: d.lines_added,
           lines_removed: d.lines_removed,
         })),
+        risk_scores:   riskScores,
+        verdict,
+        verdict_reason: verdictReason,
       });
       return;
     }

@@ -1,8 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { join } from "path";
+import { homedir } from "os";
+import { existsSync } from "fs";
+import { createClient } from "@libsql/client";
 import { getStructuralClient } from "../../services/structural/db-cache.js";
 import { getReasoningData } from "../../services/reasoning/service.js";
+import { scoreChangedSymbols, getChangedSymbols, deriveVerdict } from "../../services/structural/risk-scorer.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -623,6 +627,80 @@ export function registerStructuralTools(server: McpServer): void {
         content: [{
           type: "text" as const,
           text: JSON.stringify({ error: "provide either symbol or file" }),
+        }],
+      };
+    },
+  );
+
+  // ─── analyze_change_risk ──────────────────────────────────────────────────
+
+  server.tool(
+    "analyze_change_risk",
+    `Analyse the risk of a set of changed symbols by combining structural blast radius (how many things depend on them) with reasoning layer risks (decisions, HIGH/CRITICAL records). Returns a risk score (0-100) per symbol and an overall verdict. Use before committing changes or creating a PR.`,
+    {
+      symbols: z.array(z.string()).optional().describe(
+        "Symbol names to analyse. If omitted, auto-detects from git diff in cwd.",
+      ),
+      repo:    z.string().optional().describe("Absolute path to the repo root (defaults to cwd)"),
+    },
+    async ({ symbols, repo }) => {
+      const cwd = repo ?? process.cwd();
+      const db  = getDb(cwd);
+      if (!db) return notIndexedError();
+
+      const structDbPath   = join(cwd, ".codegraph", "structural.db");
+      const sessionsDbPath = join(homedir(), ".codegraph", "sessions.db");
+      const structDb       = createClient({ url: `file:${structDbPath}` });
+      const reasonDb       = createClient({ url: `file:${sessionsDbPath}` });
+
+      let symbolList = symbols ?? [];
+
+      if (symbolList.length === 0) {
+        // Auto-detect from git diff
+        const { getGitDiff } = await import("../../services/review/renderers/review.js");
+        const diffs      = getGitDiff(cwd);
+        const filePaths  = diffs.map((d) => d.path);
+        symbolList       = await getChangedSymbols(filePaths, structDb);
+      }
+
+      if (symbolList.length === 0) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              verdict:       "low",
+              verdict_reason: "no changed symbols found — structural index may need rebuild",
+              scores:        [],
+            }),
+          }],
+        };
+      }
+
+      const scores  = await scoreChangedSymbols(symbolList.slice(0, 25), cwd, structDb, reasonDb);
+      const verdict = deriveVerdict(scores);
+
+      const topScore = scores[0];
+      const verdictReason = topScore
+        ? `${topScore.symbol} — centrality ${topScore.components.structural_centrality}/40` +
+          (topScore.detail.critical_records > 0 ? ` + ${topScore.detail.critical_records} critical risk record(s)` : "") +
+          (!topScore.detail.has_test_coverage ? " + no test coverage" : "")
+        : "no symbols analysed";
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            verdict,
+            verdict_reason: verdictReason,
+            scores: scores.map((s) => ({
+              symbol:       s.symbol,
+              file:         s.file,
+              total_score:  s.total_score,
+              risk_level:   s.risk_level,
+              components:   s.components,
+              detail:       s.detail,
+            })),
+          }),
         }],
       };
     },

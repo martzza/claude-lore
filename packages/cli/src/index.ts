@@ -558,6 +558,17 @@ program
     await runReviewPropagation(file, opts);
   });
 
+// claude-lore detect-changes
+program
+  .command("detect-changes")
+  .description("Analyse changed symbols and produce a risk-scored report")
+  .option("--staged", "Only analyse staged changes (git diff --cached)")
+  .option("--format <fmt>", "Output format: text (default)|json", "text")
+  .action(async (opts: { staged?: boolean; format?: string }) => {
+    const { runDetectChanges } = await import("./commands/detect-changes.js");
+    await runDetectChanges(opts);
+  });
+
 // claude-lore mode
 const modeCmd = program
   .command("mode")
