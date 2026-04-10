@@ -1,6 +1,12 @@
 import type { EnrichedDepGraph, EnrichedFileNode } from "../deps.js";
 import { basename, dirname } from "path";
 
+const COMMUNITY_COLOURS = [
+  "#1e3a5f", "#1e5f3a", "#5f3a1e", "#3a1e5f",
+  "#5f1e3a", "#1e5f5f", "#5f5f1e", "#3a5f1e",
+  "#5f1e1e", "#1e1e5f", "#5f3a5f", "#3a5f5f",
+];
+
 function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -28,31 +34,42 @@ export function renderCodebaseMap(
   graph: EnrichedDepGraph,
   title: string,
   layout: "force" | "hierarchy" | "radial" = "force",
+  fileCommunityMap: Map<string, string> = new Map(),
 ): string {
+  // Assign stable colour indices to community names
+  const communityNames = [...new Set(fileCommunityMap.values())].sort();
+  const communityColourIndex = new Map<string, number>();
+  communityNames.forEach((name, i) => communityColourIndex.set(name, i % COMMUNITY_COLOURS.length));
   const nodeCount = graph.nodes.length;
   const edgeCount = graph.edges.length;
 
   // Build D3-ready node/link structures
-  const d3Nodes = graph.nodes.map((n) => ({
-    id: n.path,
-    label: basename(n.path),
-    group: groupLabel(n),
-    depth: n.depth,
-    colour: nodeColour(n),
-    radius: nodeRadius(n),
-    decision_count: n.decision_count,
-    risk_count: n.risk_count,
-    deferred_count: n.deferred_count,
-    annotation_count: n.annotation_count,
-    has_reasoning: n.has_reasoning,
-    size_bytes: n.size_bytes,
-    ext: n.ext,
-    dep_count: n.deps.length,
-    dependent_count: n.dependents.length,
-    is_entry: graph.entry_points.includes(n.path),
-    records: n.records,
-    source_lines: n.source_lines,
-  }));
+  const d3Nodes = graph.nodes.map((n) => {
+    const community = fileCommunityMap.get(n.path) ?? null;
+    const colIdx    = community !== null ? (communityColourIndex.get(community) ?? 0) : -1;
+    return {
+      id: n.path,
+      label: basename(n.path),
+      group: groupLabel(n),
+      depth: n.depth,
+      colour: nodeColour(n),
+      community_colour: colIdx >= 0 ? COMMUNITY_COLOURS[colIdx] : null,
+      community,
+      radius: nodeRadius(n),
+      decision_count: n.decision_count,
+      risk_count: n.risk_count,
+      deferred_count: n.deferred_count,
+      annotation_count: n.annotation_count,
+      has_reasoning: n.has_reasoning,
+      size_bytes: n.size_bytes,
+      ext: n.ext,
+      dep_count: n.deps.length,
+      dependent_count: n.dependents.length,
+      is_entry: graph.entry_points.includes(n.path),
+      records: n.records,
+      source_lines: n.source_lines,
+    };
+  });
 
   const d3Links = graph.edges.map((e) => ({
     source: e.from,
@@ -190,11 +207,16 @@ svg#graph:active{cursor:grabbing}
     </select>
   </label>
   <button id="btn-reset" class="sec">Reset zoom</button>
-  <div class="legend">
+  <button id="btn-view-toggle" class="sec">Community view</button>
+  <div class="legend" id="legend-risk">
     <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Risk</div>
     <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Decision</div>
     <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Deferred</div>
     <div class="legend-item"><div class="legend-dot" style="background:#94a3b8"></div>No reasoning</div>
+  </div>
+  <div class="legend" id="legend-community" style="display:none">
+    <span style="font-size:11px;color:#94a3b8">Colour = community cluster</span>
+    <div class="legend-item"><div class="legend-dot" style="background:#64748b"></div>No community</div>
   </div>
 </div>
 <div id="main">
@@ -496,6 +518,55 @@ document.getElementById("filter-select").onchange = (e) => {
 };
 document.getElementById("layout-select").onchange = (e) => {
   buildSim(...Object.values(filteredData()));
+};
+
+// Community view toggle
+let communityViewActive = false;
+document.getElementById("btn-view-toggle").onclick = () => {
+  communityViewActive = !communityViewActive;
+  const btn = document.getElementById("btn-view-toggle");
+  btn.textContent = communityViewActive ? "Risk heatmap" : "Community view";
+  btn.style.background = communityViewActive ? "#7c3aed" : "";
+  btn.style.borderColor = communityViewActive ? "#7c3aed" : "";
+  btn.style.color = communityViewActive ? "#fff" : "";
+  document.getElementById("legend-risk").style.display = communityViewActive ? "none" : "";
+  document.getElementById("legend-community").style.display = communityViewActive ? "" : "none";
+  if (nodeEls) {
+    nodeEls.selectAll("circle").attr("fill", (d) => {
+      if (communityViewActive) {
+        return d.community_colour ?? "#334155";
+      }
+      return d.colour;
+    });
+    // Draw community hull labels
+    container.selectAll(".community-hull").remove();
+    if (communityViewActive) {
+      // Group nodes by community
+      const communityGroups = new Map();
+      allNodes.forEach(n => {
+        if (n.community && n.x !== undefined) {
+          if (!communityGroups.has(n.community)) communityGroups.set(n.community, []);
+          communityGroups.get(n.community).push(n);
+        }
+      });
+      // Draw label at centroid of each community
+      const hullLayer = container.insert("g", ".links").attr("class", "community-hull");
+      communityGroups.forEach((nodes, name) => {
+        const cx = nodes.reduce((s, n) => s + (n.x ?? 0), 0) / nodes.length;
+        const cy = nodes.reduce((s, n) => s + (n.y ?? 0), 0) / nodes.length;
+        hullLayer.append("text")
+          .attr("x", cx)
+          .attr("y", cy)
+          .attr("text-anchor", "middle")
+          .attr("fill", nodes[0].community_colour ?? "#94a3b8")
+          .attr("font-size", "11px")
+          .attr("font-weight", "700")
+          .attr("opacity", "0.85")
+          .attr("pointer-events", "none")
+          .text(name);
+      });
+    }
+  }
 };
 
 // Initial build

@@ -48,6 +48,8 @@ Map the user's question to the correct MCP tool sequence before answering:
 | "who calls X / what uses X" | `codegraph_callers(symbol, repo)` |
 | "what does X call / what does X depend on" | `codegraph_callees(symbol, repo)` |
 | "find symbol / search for X" | `codegraph_search(query, repo)` |
+| "what module / community does X belong to" | `codegraph_communities(symbol=X, repo)` |
+| "show me the module structure / architecture clusters" | `codegraph_communities(repo)` |
 | "context for task / help me work on X" | `get_minimal_context(task, repo)` first; fall back to `codegraph_context(task, repo)` for full context |
 | "what's deferred on X" | `reasoning_get(symbol=X, repo)` — filter to `deferred_work` type |
 | "what was in progress last session" | `session_load(repo)` → `session_search(query, repo)` |

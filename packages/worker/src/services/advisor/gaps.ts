@@ -19,7 +19,8 @@ export type GapType =
   | "supersession_conflict"
   | "unreviewed_template_records"
   | "unresolved_conflict"
-  | "uncovered_symbol";
+  | "uncovered_symbol"
+  | "cross_community_coupling";
 
 export interface KnowledgeGap {
   type: GapType;
@@ -456,6 +457,46 @@ export async function analyseKnowledgeGaps(
           });
         }
       } catch { /* structural db may not have kind column yet */ }
+    }
+  }
+
+  // 13. cross_community_coupling — symbols with heavy cross-community call traffic
+  if (existsSync(structuralPath) && isAbsolute(cwd)) {
+    const sdb2 = getStructuralClient(structuralPath);
+    if (sdb2) {
+      try {
+        const crossRes = await sdb2.execute({
+          sql: `SELECT cg.caller, s1.community as caller_community,
+                       cg.callee, s2.community as callee_community,
+                       COUNT(*) as edge_count
+                FROM call_graph cg
+                JOIN symbols s1 ON s1.name = cg.caller
+                JOIN symbols s2 ON s2.name = cg.callee
+                WHERE s1.community IS NOT NULL
+                  AND s2.community IS NOT NULL
+                  AND s1.community != s2.community
+                  AND cg.kind = 'calls'
+                GROUP BY cg.caller, cg.callee
+                HAVING edge_count >= 3
+                ORDER BY edge_count DESC
+                LIMIT 5`,
+          args: [],
+        });
+        for (const row of crossRes.rows) {
+          const r = row as Record<string, unknown>;
+          gaps.push({
+            type:        "cross_community_coupling",
+            symbol:      String(r["caller"]),
+            description: `"${String(r["caller"])}" (${String(r["caller_community"])}) calls ` +
+              `"${String(r["callee"])}" (${String(r["callee_community"])}) ${String(r["edge_count"])} times — ` +
+              `tight cross-module coupling`,
+            score:        5,
+            capture_hint: `Consider whether this coupling is intentional. ` +
+              `If not, extract an interface or adapter layer.`,
+            estimated_effort: "hours",
+          });
+        }
+      } catch { /* communities may not be populated yet */ }
     }
   }
 

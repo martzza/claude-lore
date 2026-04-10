@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { writeFileSync } from "fs";
+import { writeFileSync, existsSync } from "fs";
 import { join, isAbsolute, resolve } from "path";
 import { tmpdir } from "os";
 import { buildDepGraph, enrichDepGraph } from "../services/review/deps.js";
@@ -7,6 +7,29 @@ import { getCachedGraph, setCachedGraph, invalidateCache } from "../services/rev
 import { renderCodebaseMap } from "../services/review/renderers/map.js";
 import { renderPropagationView } from "../services/review/renderers/propagation.js";
 import { buildReview, renderReviewHtml, getGitDiff } from "../services/review/renderers/review.js";
+import { getStructuralClient } from "../services/structural/db-cache.js";
+
+// Fetch file→community mapping from structural DB (best-effort, returns empty map on failure)
+async function getFileCommunityMap(cwd: string): Promise<Map<string, string>> {
+  const dbPath = join(cwd, ".codegraph", "structural.db");
+  if (!existsSync(dbPath)) return new Map();
+  try {
+    const db = getStructuralClient(dbPath);
+    if (!db) return new Map();
+    const res = await db.execute(
+      `SELECT DISTINCT file, community FROM symbols WHERE community IS NOT NULL`,
+    );
+    const map = new Map<string, string>();
+    for (const row of res.rows) {
+      const file      = String(row["file"]);
+      const community = String(row["community"]);
+      if (!map.has(file)) map.set(file, community); // first community wins per file
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
 
 const router = Router();
 
@@ -37,7 +60,8 @@ router.get("/deps", async (req, res) => {
 
     if (format === "html") {
       const enriched = await enrichDepGraph(graph, repo);
-      const html = renderCodebaseMap(enriched, repo);
+      const communityMap = await getFileCommunityMap(cwd);
+      const html = renderCodebaseMap(enriched, repo, "force", communityMap);
       res.setHeader("Content-Type", "text/html");
       res.send(html);
       return;
@@ -100,7 +124,8 @@ router.get("/map", async (req, res) => {
       return;
     }
 
-    const html = renderCodebaseMap(enriched, repo, layout);
+    const communityMap = await getFileCommunityMap(cwd);
+    const html = renderCodebaseMap(enriched, repo, layout, communityMap);
     res.setHeader("Content-Type", "text/html");
     res.send(html);
   } catch (err) {
@@ -259,7 +284,8 @@ router.get("/open", async (req, res) => {
       let graph = getCachedGraph(cwd);
       if (!graph) { graph = await buildDepGraph(repo, cwd); setCachedGraph(cwd, graph); }
       const enriched = await enrichDepGraph(graph, repo);
-      html = renderCodebaseMap(enriched, repo);
+      const communityMap = await getFileCommunityMap(cwd);
+      html = renderCodebaseMap(enriched, repo, "force", communityMap);
       filename = "claude-lore-map.html";
     }
 

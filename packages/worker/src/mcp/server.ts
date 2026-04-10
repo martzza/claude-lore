@@ -25,7 +25,7 @@ const _mcpStats: McpStats = {
   totalCalls: 0,
   lastCallAt: null,
   callsToday: 0,
-  toolCount:  37,
+  toolCount:  38,
 };
 
 let _todayDate = new Date().toDateString();

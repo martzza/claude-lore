@@ -6,6 +6,7 @@ import { randomUUID } from "crypto";
 import { parseFile } from "./parser.js";
 import { hashFile } from "./hasher.js";
 import { checkStalenessForSymbols } from "../staleness/service.js";
+import { detectCommunities } from "./communities.js";
 
 // ---------------------------------------------------------------------------
 // File discovery
@@ -108,6 +109,19 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
             ON call_graph(caller, callee, caller_file)`,
       args: [],
     },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS communities (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        symbols     TEXT NOT NULL,
+        files       TEXT NOT NULL,
+        size        INTEGER NOT NULL,
+        hub_symbol  TEXT,
+        description TEXT,
+        detected_at INTEGER NOT NULL DEFAULT (unixepoch())
+      )`,
+      args: [],
+    },
   ], "write");
 
   // Lazy migrations for structural.db instances created before these columns
@@ -116,6 +130,7 @@ async function initStructuralDb(db: ReturnType<typeof createClient>): Promise<vo
     `ALTER TABLE symbols ADD COLUMN is_test INTEGER DEFAULT 0`,
     `ALTER TABLE call_graph ADD COLUMN call_line INTEGER`,
     `ALTER TABLE call_graph ADD COLUMN kind TEXT DEFAULT 'calls'`,
+    `ALTER TABLE symbols ADD COLUMN community TEXT`,
   ];
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column already exists */ }
@@ -422,6 +437,38 @@ async function _runBuildIndex(repo: string, cwd: string, force: boolean): Promis
     const ec = await db.execute(`SELECT COUNT(*) as n FROM call_graph`);
     symbolCount = Number(sc.rows[0]?.["n"] ?? symbolCount);
     edgeCount   = Number(ec.rows[0]?.["n"] ?? edgeCount);
+  }
+
+  // Detect communities after full rebuild or when enough files changed
+  if (!isIncremental || changedFiles.length > 10) {
+    console.log("[claude-lore] detecting communities...");
+    try {
+      const communities = await detectCommunities(db);
+
+      await db.execute("DELETE FROM communities");
+      for (const c of communities) {
+        await db.execute({
+          sql:  `INSERT INTO communities (id, name, symbols, files, size, hub_symbol, description)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          args: [c.id, c.name, JSON.stringify(c.symbols), JSON.stringify(c.files),
+                 c.size, c.hub_symbol ?? null, c.description],
+        });
+        // Tag each symbol with its community (batch for performance)
+        for (let i = 0; i < c.symbols.length; i += 200) {
+          const batch = c.symbols.slice(i, i + 200);
+          await db.batch(
+            batch.map((sym) => ({
+              sql:  "UPDATE symbols SET community = ? WHERE name = ?",
+              args: [c.name, sym],
+            })),
+            "write",
+          );
+        }
+      }
+      console.log(`[claude-lore] found ${communities.length} communities`);
+    } catch (e) {
+      console.warn("[claude-lore] community detection failed:", e);
+    }
   }
 
   // Current symbol names for deletion detection

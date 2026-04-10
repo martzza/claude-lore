@@ -112,7 +112,7 @@ export function registerStructuralTools(server: McpServer): void {
       const nextTools: string[] = [];
 
       for (const sym of topSymbols) {
-        const [callersRes, calleesRes, coverageRes] = await Promise.all([
+        const [callersRes, calleesRes, coverageRes, communityRes] = await Promise.all([
           db.execute({
             sql:  `SELECT DISTINCT caller FROM call_graph WHERE callee = ? AND kind = 'calls' LIMIT 8`,
             args: [sym.name],
@@ -123,6 +123,10 @@ export function registerStructuralTools(server: McpServer): void {
           }),
           db.execute({
             sql:  `SELECT COUNT(*) as c FROM call_graph WHERE callee = ? AND kind = 'test_covers'`,
+            args: [sym.name],
+          }),
+          db.execute({
+            sql:  `SELECT community FROM symbols WHERE name = ? LIMIT 1`,
             args: [sym.name],
           }),
         ]);
@@ -138,6 +142,8 @@ export function registerStructuralTools(server: McpServer): void {
         const callerNames  = callersRes.rows.map((r) => String(r["caller"]));
         const calleeNames  = calleesRes.rows.map((r) => String(r["callee"]));
         const testCount    = Number(coverageRes.rows[0]?.["c"] ?? 0);
+        const community    = communityRes.rows[0]?.["community"]
+          ? String(communityRes.rows[0]["community"]) : null;
 
         const parts: string[] = [`## ${sym.name} (${sym.kind}) — ${sym.file}:${sym.start_line}`];
 
@@ -156,6 +162,10 @@ export function registerStructuralTools(server: McpServer): void {
           parts.push(`CALLS: ${calleeNames.join(", ")}`);
         }
         parts.push(`TESTS: ${testCount > 0 ? `${testCount} test(s) cover this` : "NONE ⚠"}`);
+        if (community) {
+          parts.push(`COMMUNITY: ${community}`);
+          nextTools.push(`codegraph_communities(${sym.name}) — see other symbols in ${community} community`);
+        }
 
         contextParts.push(parts.join("\n"));
 
@@ -181,6 +191,97 @@ export function registerStructuralTools(server: McpServer): void {
             context:              fullText,
             token_estimate:       tokenEstimate,
             next_tool_suggestions: [...new Set(nextTools)].slice(0, 3),
+          }),
+        }],
+      };
+    },
+  );
+
+  // ─── codegraph_communities ────────────────────────────────────────────────
+
+  server.tool(
+    "codegraph_communities",
+    "List code communities — clusters of highly interconnected symbols that form natural modules. Use this to understand high-level architecture and identify tightly coupled groups. Call with a symbol name to find which community it belongs to.",
+    {
+      repo:   z.string().optional().describe("Absolute path to the repo root (defaults to cwd)"),
+      symbol: z.string().optional().describe("Find which community a specific symbol belongs to"),
+    },
+    async ({ repo, symbol }) => {
+      const cwd = repo ?? process.cwd();
+      const db  = getDb(cwd);
+      if (!db) return notIndexedError();
+
+      if (symbol) {
+        const symRes = await db.execute({
+          sql:  "SELECT community FROM symbols WHERE name = ?",
+          args: [symbol],
+        });
+
+        if (!symRes.rows.length || !symRes.rows[0]!["community"]) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                symbol,
+                community: null,
+                message:   "Symbol not found in any community (may be isolated or index needs rebuild)",
+              }),
+            }],
+          };
+        }
+
+        const communityName = String(symRes.rows[0]!["community"]);
+        const cRes = await db.execute({
+          sql:  "SELECT * FROM communities WHERE name = ?",
+          args: [communityName],
+        });
+
+        if (!cRes.rows.length) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({ symbol, community: communityName }),
+            }],
+          };
+        }
+
+        const c = cRes.rows[0]!;
+        const allSymbols = JSON.parse(String(c["symbols"])) as string[];
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              symbol,
+              community:      communityName,
+              description:    c["description"],
+              size:           c["size"],
+              hub_symbol:     c["hub_symbol"],
+              other_symbols:  allSymbols.filter((s) => s !== symbol).slice(0, 10),
+              total_in_community: allSymbols.length,
+            }),
+          }],
+        };
+      }
+
+      // Return all communities summary
+      const allRes = await db.execute(
+        "SELECT id, name, size, hub_symbol, description FROM communities ORDER BY size DESC",
+      );
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            total_communities: allRes.rows.length,
+            communities: allRes.rows.map((c) => ({
+              name:        String(c["name"]),
+              size:        Number(c["size"]),
+              hub_symbol:  c["hub_symbol"] ? String(c["hub_symbol"]) : null,
+              description: c["description"] ? String(c["description"]) : null,
+            })),
+            hint: allRes.rows.length === 0
+              ? "No communities detected — run: claude-lore index --force to rebuild"
+              : undefined,
           }),
         }],
       };
